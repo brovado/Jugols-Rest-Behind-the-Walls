@@ -14,6 +14,7 @@ import {
   loadGameState,
 } from '../state/gameState.js';
 import { getDomUI } from '../ui/domUI.js';
+import { initDomHud } from '../ui/domHud.js';
 import { moveToward } from '../utils/pathing.js';
 
 const WORLD_WIDTH = 2000;
@@ -29,7 +30,7 @@ export default class GameScene extends Phaser.Scene {
     this.player = null;
     this.targetMarker = null;
     this.targetPoint = null;
-    this.hud = null;
+    this.domHud = null;
     this.phaseOverlay = null;
     this.phaseBanner = null;
     this.victoryOverlay = null;
@@ -57,14 +58,15 @@ export default class GameScene extends Phaser.Scene {
     this.setupMarkers();
     this.setupInput();
     this.setupDomUI();
+    this.setupDomHud();
     this.setupOverlays();
 
     this.updateHud();
     this.cameras.main.fadeIn(500, 0, 0, 0);
 
     this.inputLocked = false;
-    if (this.hud) {
-      this.hud.setInteractionLocked(false);
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(false);
     }
   }
 
@@ -149,6 +151,22 @@ export default class GameScene extends Phaser.Scene {
     });
     this.domUI.setAutoMove(this.autoMoveEnabled);
     this.appendLog('Entered Jugol’s Rest. Click to move.');
+  }
+
+  setupDomHud() {
+    this.domHud = initDomHud(this.state, {
+      onCollectButcher: () => this.handleCollect('butcher'),
+      onCollectTavern: () => this.handleCollect('tavern'),
+      onCollectMarket: () => this.handleCollect('market'),
+      onFeedPack: () => this.toggleFeedPanel(),
+      onStabilizeCamp: () => this.handleStabilizeCamp(),
+      onStartNight: () => this.handleStartNight(),
+      onClearOvergrowth: () => this.handleClearOvergrowth(),
+      onGuardRoute: () => this.handleGuardRoute(),
+      onSuppressThreat: () => this.handleSuppressThreat(),
+      onEndNight: () => this.handleEndNight(),
+      onConfirmFeed: (feedPlan) => this.handleFeed(feedPlan),
+    });
   }
 
   setupOverlays() {
@@ -308,8 +326,8 @@ export default class GameScene extends Phaser.Scene {
       inRouteZone: this.isInZone('route'),
       inThreatZone: this.isInZone('threat'),
     };
-    if (this.hud) {
-      this.hud.update(this.state, context);
+    if (this.domHud) {
+      this.domHud.update(this.state, context);
     }
 
     if (this.state.victory) {
@@ -369,8 +387,8 @@ export default class GameScene extends Phaser.Scene {
         market: 'Collected supplies from the Market.',
       };
       addEvent(this.state, labels[locationKey] || 'Collected supplies.');
-      if (this.hud) {
-        this.hud.hideFeedPanel();
+      if (this.domHud) {
+        this.domHud.hideFeedPanel();
       }
       this.updateHud();
     }
@@ -390,9 +408,9 @@ export default class GameScene extends Phaser.Scene {
           `Fed ${name} (${entry.scraps || 0} scraps, ${entry.fatty || 0} fatty).`
         );
       });
-      if (this.hud) {
-        this.hud.hideFeedPanel();
-        this.hud.playFeedAnimations(feedPlan);
+      if (this.domHud) {
+        this.domHud.hideFeedPanel();
+        this.domHud.playFeedAnimations(feedPlan);
       }
       this.updateHud();
     }
@@ -413,8 +431,8 @@ export default class GameScene extends Phaser.Scene {
     startNight(this.state);
     addEvent(this.state, 'Night falls over Jugol’s Rest.');
     saveGameState(this.state);
-    if (this.hud) {
-      this.hud.hideFeedPanel();
+    if (this.domHud) {
+      this.domHud.hideFeedPanel();
     }
     this.playPhaseTransition(previousPhase, this.state.phase);
     this.updateHud();
@@ -423,8 +441,8 @@ export default class GameScene extends Phaser.Scene {
   handleClearOvergrowth() {
     if (clearOvergrowth(this.state)) {
       addEvent(this.state, 'Carved back the overgrowth.');
-      if (this.hud) {
-        this.hud.flashNightStats();
+      if (this.domHud) {
+        this.domHud.flashNightStats();
       }
       this.updateHud();
     }
@@ -433,8 +451,8 @@ export default class GameScene extends Phaser.Scene {
   handleGuardRoute() {
     if (guardRoute(this.state)) {
       addEvent(this.state, 'Guarded the route through the ruins.');
-      if (this.hud) {
-        this.hud.flashNightStats();
+      if (this.domHud) {
+        this.domHud.flashNightStats();
       }
       this.updateHud();
     }
@@ -443,8 +461,8 @@ export default class GameScene extends Phaser.Scene {
   handleSuppressThreat() {
     if (suppressThreat(this.state)) {
       addEvent(this.state, 'Suppressed the lurking threat.');
-      if (this.hud) {
-        this.hud.flashNightStats();
+      if (this.domHud) {
+        this.domHud.flashNightStats();
       }
       this.updateHud();
     }
@@ -466,8 +484,8 @@ export default class GameScene extends Phaser.Scene {
     if (this.state.phase !== 'DAY') {
       return;
     }
-    if (this.hud) {
-      this.hud.toggleFeedPanel(!this.hud.isFeedPanelVisible());
+    if (this.domHud) {
+      this.domHud.toggleFeedPanel(!this.domHud.isFeedPanelVisible());
     }
   }
 
