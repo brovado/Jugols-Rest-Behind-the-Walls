@@ -37,7 +37,7 @@ export default class TitleScene extends Phaser.Scene {
       width: 240,
       height: 42,
       label: 'New Run',
-      onClick: () => this.startGame({ loadSave: false, showIntro: true }),
+      onClick: () => this.startGame('IntroScene', { loadSave: false }),
     });
 
     const continueButton = createButton(this, {
@@ -46,7 +46,7 @@ export default class TitleScene extends Phaser.Scene {
       width: 240,
       height: 42,
       label: 'Continue',
-      onClick: () => this.startGame({ loadSave: true, showIntro: false }),
+      onClick: () => this.startGame('GameScene', { loadSave: true }),
     });
 
     const settingsButton = createButton(this, {
@@ -76,11 +76,11 @@ export default class TitleScene extends Phaser.Scene {
     this.cameras.main.fadeIn(600, 0, 0, 0);
   }
 
-  startGame(data) {
+  startGame(sceneKey, data) {
     this.buttons.forEach((button) => button.setEnabled(false));
     this.cameras.main.fadeOut(600, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('GameScene', data);
+      this.scene.start(sceneKey, data);
     });
   }
 

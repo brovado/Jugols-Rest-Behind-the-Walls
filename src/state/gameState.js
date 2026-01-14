@@ -4,7 +4,104 @@ const IMMIGRATION_BURST = 6;
 const MAX_METER = 100;
 const SAVE_KEY = 'jugols-rest-save';
 
+// Tunable pack rules and role-based contributions.
+const PACK_BASE_STAMINA = 3;
+const PACK_BASE_POWER = 1;
+const HUNGER_REDUCTION_PER_FOOD = 15;
+
+const SCRAPS_STAMINA_BY_ROLE = {
+  Scout: 2,
+  Bruiser: 1,
+  Warden: 1,
+};
+
+const FATTY_POWER_BY_ROLE = {
+  Scout: 0,
+  Bruiser: 2,
+  Warden: 1,
+};
+
 const clampMeter = (value) => Math.max(0, Math.min(MAX_METER, value));
+
+const createPack = () => ([
+  {
+    id: 'hyena-scout',
+    name: 'Kefa',
+    role: 'Scout',
+    temperament: 'Wary',
+    hunger: 45,
+    fedScraps: 0,
+    fedFatty: 0,
+  },
+  {
+    id: 'hyena-bruiser',
+    name: 'Asha',
+    role: 'Bruiser',
+    temperament: 'Fierce',
+    hunger: 50,
+    fedScraps: 0,
+    fedFatty: 0,
+  },
+  {
+    id: 'hyena-warden',
+    name: 'Rift',
+    role: 'Warden',
+    temperament: 'Calm',
+    hunger: 40,
+    fedScraps: 0,
+    fedFatty: 0,
+  },
+]);
+
+const normalizePack = (packData) => {
+  if (!Array.isArray(packData) || packData.length === 0) {
+    return createPack();
+  }
+  const defaults = createPack();
+  return defaults.map((base) => {
+    const existing = packData.find((entry) => entry.id === base.id) || {};
+    return {
+      ...base,
+      ...existing,
+      fedScraps: existing.fedScraps ?? base.fedScraps,
+      fedFatty: existing.fedFatty ?? base.fedFatty,
+      hunger: typeof existing.hunger === 'number' ? clampMeter(existing.hunger) : base.hunger,
+    };
+  });
+};
+
+export const getHyenaContribution = (hyena) => {
+  const stamina = (SCRAPS_STAMINA_BY_ROLE[hyena.role] || 0) * (hyena.fedScraps || 0);
+  const power = (FATTY_POWER_BY_ROLE[hyena.role] || 0) * (hyena.fedFatty || 0);
+  return { stamina, power };
+};
+
+export const getPackTotals = (pack) => {
+  if (!Array.isArray(pack)) {
+    return { stamina: 0, power: 0 };
+  }
+  return pack.reduce(
+    (totals, hyena) => {
+      const contribution = getHyenaContribution(hyena);
+      return {
+        stamina: totals.stamina + contribution.stamina,
+        power: totals.power + contribution.power,
+      };
+    },
+    { stamina: 0, power: 0 }
+  );
+};
+
+export const hasPackRole = (pack, role) =>
+  Array.isArray(pack) && pack.some((hyena) => hyena.role === role);
+
+export const packRules = {
+  SCRAPS_STAMINA_BY_ROLE,
+  FATTY_POWER_BY_ROLE,
+  HUNGER_REDUCTION_PER_FOOD,
+  PACK_BASE_STAMINA,
+  PACK_BASE_POWER,
+};
 
 export const createInitialState = () => ({
   dayNumber: 1,
@@ -12,10 +109,9 @@ export const createInitialState = () => ({
   dayActionsRemaining: DAY_ACTIONS,
   foodScraps: 0,
   foodFatty: 0,
-  packFedScraps: 0,
-  packFedFatty: 0,
-  hyenaStamina: 0,
-  hyenaPower: 0,
+  pack: createPack(),
+  packStamina: 0,
+  packPower: 0,
   tension: 10,
   overgrowth: 10,
   threatActive: false,
@@ -66,6 +162,7 @@ export const loadGameState = () => {
     return {
       ...base,
       ...data,
+      pack: normalizePack(data.pack),
       locationCollected: {
         ...base.locationCollected,
         ...data.locationCollected,
@@ -123,12 +220,10 @@ export const startDay = (state, { advanceDay }) => {
 
 export const startNight = (state) => {
   state.phase = 'NIGHT';
-  const staminaBase = Math.max(0, 3 - state.hyenaStaminaBasePenalty);
-  state.hyenaStamina = Math.max(
-    0,
-    staminaBase + state.packFedScraps + state.packFedFatty
-  );
-  state.hyenaPower = 1 + state.packFedFatty;
+  const staminaBase = Math.max(0, PACK_BASE_STAMINA - state.hyenaStaminaBasePenalty);
+  const totals = getPackTotals(state.pack);
+  state.packStamina = Math.max(0, staminaBase + totals.stamina);
+  state.packPower = Math.max(0, PACK_BASE_POWER + totals.power);
   state.routeGuardedTonight = false;
 };
 
@@ -143,8 +238,12 @@ export const endNight = (state) => {
     state.threatNightsActiveCount = 0;
   }
 
-  state.packFedScraps = 0;
-  state.packFedFatty = 0;
+  if (Array.isArray(state.pack)) {
+    state.pack.forEach((hyena) => {
+      hyena.fedScraps = 0;
+      hyena.fedFatty = 0;
+    });
+  }
 
   startDay(state, { advanceDay: true });
 };
@@ -175,21 +274,44 @@ export const collectLocation = (state, locationKey) => {
   return true;
 };
 
-export const feedPack = (state, scrapsToFeed, fattyToFeed) => {
+export const feedHyenas = (state, feedPlan) => {
   if (state.phase !== 'DAY' || state.dayActionsRemaining <= 0) {
     return false;
   }
-  if (scrapsToFeed <= 0 && fattyToFeed <= 0) {
+  if (!Array.isArray(feedPlan) || feedPlan.length === 0) {
     return false;
   }
-  if (scrapsToFeed > state.foodScraps || fattyToFeed > state.foodFatty) {
+  const totals = feedPlan.reduce(
+    (sum, entry) => ({
+      scraps: sum.scraps + Math.max(0, entry.scraps || 0),
+      fatty: sum.fatty + Math.max(0, entry.fatty || 0),
+    }),
+    { scraps: 0, fatty: 0 }
+  );
+  if (totals.scraps <= 0 && totals.fatty <= 0) {
+    return false;
+  }
+  if (totals.scraps > state.foodScraps || totals.fatty > state.foodFatty) {
     return false;
   }
 
-  state.foodScraps -= scrapsToFeed;
-  state.foodFatty -= fattyToFeed;
-  state.packFedScraps += scrapsToFeed;
-  state.packFedFatty += fattyToFeed;
+  const packMap = new Map(state.pack.map((hyena) => [hyena.id, hyena]));
+  feedPlan.forEach((entry) => {
+    const hyena = packMap.get(entry.id);
+    if (!hyena) {
+      return;
+    }
+    const scraps = Math.max(0, entry.scraps || 0);
+    const fatty = Math.max(0, entry.fatty || 0);
+    hyena.fedScraps += scraps;
+    hyena.fedFatty += fatty;
+    // Each unit of food both sates hunger and boosts tonight's role-based totals.
+    const hungerDrop = (scraps + fatty) * HUNGER_REDUCTION_PER_FOOD;
+    hyena.hunger = clampMeter(hyena.hunger - hungerDrop);
+  });
+
+  state.foodScraps -= totals.scraps;
+  state.foodFatty -= totals.fatty;
   state.dayActionsRemaining -= 1;
   return true;
 };
@@ -212,31 +334,34 @@ export const stabilizeCamp = (state) => {
 };
 
 export const clearOvergrowth = (state) => {
-  if (state.phase !== 'NIGHT' || state.hyenaStamina < 2) {
+  if (state.phase !== 'NIGHT' || state.packStamina < 2) {
     return false;
   }
-  state.hyenaStamina -= 2;
-  state.overgrowth = clampMeter(state.overgrowth - 20);
+  state.packStamina -= 2;
+  const hasWarden = hasPackRole(state.pack, 'Warden');
+  state.overgrowth = clampMeter(state.overgrowth - (hasWarden ? 25 : 20));
   return true;
 };
 
 export const guardRoute = (state) => {
-  if (state.phase !== 'NIGHT' || state.hyenaStamina < 2) {
+  const staminaCost = Math.max(1, hasPackRole(state.pack, 'Scout') ? 1 : 2);
+  if (state.phase !== 'NIGHT' || state.packStamina < staminaCost) {
     return false;
   }
-  state.hyenaStamina -= 2;
+  state.packStamina -= staminaCost;
   state.routeGuardedTonight = true;
   return true;
 };
 
 export const suppressThreat = (state) => {
-  if (state.phase !== 'NIGHT' || state.hyenaStamina < 3) {
+  const powerRequirement = hasPackRole(state.pack, 'Bruiser') ? 1 : 2;
+  if (state.phase !== 'NIGHT' || state.packStamina < 3) {
     return false;
   }
-  if (!state.threatActive || state.hyenaPower < 2) {
+  if (!state.threatActive || state.packPower < powerRequirement) {
     return false;
   }
-  state.hyenaStamina -= 3;
+  state.packStamina -= 3;
   state.threatActive = false;
   return true;
 };

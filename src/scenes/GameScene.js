@@ -4,7 +4,7 @@ import {
   startNight,
   endNight,
   collectLocation,
-  feedPack,
+  feedHyenas,
   stabilizeCamp,
   clearOvergrowth,
   guardRoute,
@@ -59,12 +59,8 @@ export default class GameScene extends Phaser.Scene {
     this.updateHud();
     this.cameras.main.fadeIn(500, 0, 0, 0);
 
-    if (data.showIntro) {
-      this.showChapterIntro();
-    } else {
-      this.inputLocked = false;
-      this.hud.setInteractionLocked(false);
-    }
+    this.inputLocked = false;
+    this.hud.setInteractionLocked(false);
   }
 
   setupWorld() {
@@ -132,7 +128,7 @@ export default class GameScene extends Phaser.Scene {
       onCollectTavern: () => this.handleCollect('tavern'),
       onCollectMarket: () => this.handleCollect('market'),
       onFeedPack: () => this.toggleFeedPanel(),
-      onConfirmFeed: (scraps, fatty) => this.handleFeed(scraps, fatty),
+      onConfirmFeed: (feedPlan) => this.handleFeed(feedPlan),
       onStabilizeCamp: () => this.handleStabilizeCamp(),
       onStartNight: () => this.handleStartNight(),
       onClearOvergrowth: () => this.handleClearOvergrowth(),
@@ -348,65 +344,6 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  showChapterIntro() {
-    this.inputLocked = true;
-    this.hud.setInteractionLocked(true);
-
-    const { width, height } = this.scale;
-    const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(70);
-    const bg = this.add.rectangle(0, 0, width, height, 0x020617, 0.75).setOrigin(0, 0);
-    const card = this.add
-      .rectangle(width / 2, height / 2, 520, 280, 0x0b1120, 0.96)
-      .setStrokeStyle(2, 0x38bdf8, 1);
-    const chapterTitle = this.add.text(width / 2, height / 2 - 70, 'Heart District', {
-      fontSize: '28px',
-      color: '#f8fafc',
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    const flavorText = this.add.text(width / 2, height / 2 - 20, 'Old hearths still glow behind the walls.\nSupplies are scarce, but the pack is ready.', {
-      fontSize: '16px',
-      color: '#cbd5f5',
-      align: 'center',
-      lineSpacing: 6,
-    }).setOrigin(0.5);
-    const promptText = this.add.text(width / 2, height / 2 + 80, 'Press Space or Click to Begin', {
-      fontSize: '16px',
-      color: '#facc15',
-    }).setOrigin(0.5);
-
-    overlay.add([bg, card, chapterTitle, flavorText, promptText]);
-    overlay.setAlpha(0);
-    this.tweens.add({
-      targets: overlay,
-      alpha: 1,
-      duration: 300,
-      ease: 'Sine.easeOut',
-    });
-
-    const proceed = () => {
-      if (!overlay.active) {
-        return;
-      }
-      this.tweens.add({
-        targets: overlay,
-        alpha: 0,
-        duration: 300,
-        ease: 'Sine.easeIn',
-        onComplete: () => {
-          overlay.destroy();
-          this.inputLocked = false;
-          this.hud.setInteractionLocked(false);
-        },
-      });
-    };
-
-    this.input.keyboard.once('keydown-SPACE', proceed);
-    this.input.once('pointerdown', (pointer) => {
-      pointer.event?.stopPropagation?.();
-      proceed();
-    });
-  }
-
   handleCollect(locationKey) {
     if (collectLocation(this.state, locationKey)) {
       const labels = {
@@ -420,10 +357,22 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  handleFeed(scraps, fatty) {
-    if (feedPack(this.state, scraps, fatty)) {
-      addEvent(this.state, `Fed the pack (${scraps} scraps, ${fatty} fatty).`);
+  handleFeed(feedPlan) {
+    if (feedHyenas(this.state, feedPlan)) {
+      feedPlan.forEach((entry) => {
+        const total = (entry.scraps || 0) + (entry.fatty || 0);
+        if (total <= 0) {
+          return;
+        }
+        const hyena = this.state.pack.find((member) => member.id === entry.id);
+        const name = hyena ? hyena.name : 'Hyena';
+        addEvent(
+          this.state,
+          `Fed ${name} (${entry.scraps || 0} scraps, ${entry.fatty || 0} fatty).`
+        );
+      });
       this.hud.hideFeedPanel();
+      this.hud.playFeedAnimations(feedPlan);
       this.updateHud();
     }
   }
@@ -451,6 +400,7 @@ export default class GameScene extends Phaser.Scene {
   handleClearOvergrowth() {
     if (clearOvergrowth(this.state)) {
       addEvent(this.state, 'Carved back the overgrowth.');
+      this.hud.flashNightStats();
       this.updateHud();
     }
   }
@@ -458,6 +408,7 @@ export default class GameScene extends Phaser.Scene {
   handleGuardRoute() {
     if (guardRoute(this.state)) {
       addEvent(this.state, 'Guarded the route through the ruins.');
+      this.hud.flashNightStats();
       this.updateHud();
     }
   }
@@ -465,6 +416,7 @@ export default class GameScene extends Phaser.Scene {
   handleSuppressThreat() {
     if (suppressThreat(this.state)) {
       addEvent(this.state, 'Suppressed the lurking threat.');
+      this.hud.flashNightStats();
       this.updateHud();
     }
   }
