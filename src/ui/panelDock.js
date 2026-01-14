@@ -81,9 +81,10 @@ const setDrawerOpenState = (panel, open) => {
   }
 
   if (open) {
+    panel.wrapper.classList.remove('is-hidden');
     panel.wrapper.classList.remove('is-collapsed');
     panel.body.style.opacity = '1';
-    panel.body.style.height = `${panel.body.scrollHeight}px`;
+    panel.body.style.height = '0px';
   } else {
     const currentHeight = getDrawerHeight(panel.body);
     panel.body.style.height = `${currentHeight}px`;
@@ -103,6 +104,11 @@ const finalizeDrawerState = (panel, open) => {
   if (open) {
     panel.body.style.height = 'auto';
     panel.body.style.opacity = '1';
+    panel.wrapper.classList.remove('is-hidden');
+  } else {
+    panel.body.style.height = '0px';
+    panel.body.style.opacity = '0';
+    panel.wrapper.classList.add('is-hidden');
   }
 };
 
