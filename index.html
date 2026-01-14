@@ -60,8 +60,10 @@
     }
     .panel-body {
       padding: 12px 14px;
-      flex: 1;
       min-height: 0;
+    }
+    .panel:not(.sidebar-panel) .panel-body {
+      flex: 1;
     }
     #game-panel {
       flex: 1;
@@ -164,6 +166,9 @@
       overflow: hidden;
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
+    .ui-drawer.is-hidden {
+      display: none;
+    }
     .ui-drawer.is-active {
       border-color: rgba(56, 189, 248, 0.6);
       box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.15);
@@ -172,7 +177,7 @@
       cursor: pointer;
     }
     .ui-drawer-body {
-      overflow: hidden;
+      overflow: visible;
       height: auto;
       opacity: 1;
       transition: height 0.25s ease, opacity 0.2s ease;
