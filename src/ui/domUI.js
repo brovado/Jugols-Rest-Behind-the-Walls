@@ -24,7 +24,7 @@ export const initDomUI = () => {
     return domUIInstance;
   }
 
-  const actionsPanel = document.getElementById('actions-panel');
+  const actionsPanel = document.getElementById('controls-panel');
   const statusPanel = document.getElementById('status-panel');
   const consoleLog = document.getElementById('console-log');
 

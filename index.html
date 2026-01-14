@@ -87,12 +87,199 @@
       margin-top: 12px;
     }
     #actions-panel,
-    #status-panel {
+    #status-panel,
+    #pack-panel,
+    #meters-panel,
+    #controls-panel {
       display: flex;
       flex-direction: column;
       gap: 10px;
       font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
       font-size: 13px;
+    }
+    .hud-status {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hud-status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .hud-phase-badge {
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+    }
+    .hud-phase-day {
+      color: #7dd3fc;
+      background: rgba(14, 165, 233, 0.15);
+      border-color: rgba(14, 165, 233, 0.35);
+    }
+    .hud-phase-night {
+      color: #fdba74;
+      background: rgba(249, 115, 22, 0.15);
+      border-color: rgba(249, 115, 22, 0.35);
+    }
+    .hud-action-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .hud-button {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      text-align: left;
+    }
+    .hud-button:hover:not(:disabled) {
+      border-color: #38bdf8;
+      color: #f8fafc;
+    }
+    .hud-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+    .hud-meter {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hud-meter-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #cbd5f5;
+    }
+    .hud-meter-bar {
+      height: 10px;
+      border-radius: 999px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      overflow: hidden;
+    }
+    .hud-meter-fill {
+      height: 100%;
+      width: 0;
+      transition: width 0.2s ease;
+    }
+    .pack-card {
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .pack-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .pack-card-name {
+      font-size: 14px;
+      color: #f8fafc;
+    }
+    .pack-card-role {
+      font-size: 12px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .pack-card-temp {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .hunger-bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      overflow: hidden;
+    }
+    .hunger-fill {
+      height: 100%;
+      width: 0;
+      background: #f59e0b;
+      transition: width 0.2s ease;
+    }
+    .pack-card-contrib {
+      font-size: 12px;
+      color: #e2e8f0;
+      text-align: right;
+    }
+    .feed-panel {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .feed-panel.hidden {
+      display: none;
+    }
+    .feed-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #cbd5f5;
+    }
+    .feed-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      padding: 6px 0;
+      border-bottom: 1px solid #1f2937;
+    }
+    .feed-row:last-child {
+      border-bottom: none;
+    }
+    .feed-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .feed-alloc {
+      font-size: 12px;
+      color: #cbd5f5;
+    }
+    .feed-adjust {
+      width: 26px;
+      height: 24px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #e2e8f0;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .feed-adjust:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .feed-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .hud-status-flash {
+      color: #facc15;
     }
     .action-row {
       display: flex;
@@ -129,7 +316,7 @@
     .status-value {
       color: #e2e8f0;
     }
-  </style>
+    </style>
 </head>
 <body>
   <div id="app-shell">
@@ -151,6 +338,18 @@
       <section class="panel sidebar-panel">
         <div class="panel-header">Actions</div>
         <div class="panel-body" id="actions-panel"></div>
+      </section>
+      <section class="panel sidebar-panel">
+        <div class="panel-header">Pack</div>
+        <div class="panel-body" id="pack-panel"></div>
+      </section>
+      <section class="panel sidebar-panel">
+        <div class="panel-header">Meters</div>
+        <div class="panel-body" id="meters-panel"></div>
+      </section>
+      <section class="panel sidebar-panel">
+        <div class="panel-header">Controls</div>
+        <div class="panel-body" id="controls-panel"></div>
       </section>
       <section class="panel sidebar-panel">
         <div class="panel-header">Status</div>
