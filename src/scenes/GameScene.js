@@ -15,6 +15,7 @@ import {
 } from '../state/gameState.js';
 import { getDomUI } from '../ui/domUI.js';
 import { initDomHud } from '../ui/domHud.js';
+import { setPanelActive } from '../ui/panelDock.js';
 import { moveToward } from '../utils/pathing.js';
 
 const WORLD_WIDTH = 2000;
@@ -329,6 +330,13 @@ export default class GameScene extends Phaser.Scene {
     if (this.domHud) {
       this.domHud.update(this.state, context);
     }
+
+    setPanelActive(
+      'actions',
+      this.state.phase === 'DAY'
+        ? this.state.dayActionsRemaining > 0
+        : this.state.packStamina > 0
+    );
 
     if (this.state.victory) {
       this.victoryOverlay.setVisible(true);

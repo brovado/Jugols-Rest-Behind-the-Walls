@@ -1,5 +1,11 @@
 import { getHyenaContribution, hasPackRole } from '../state/gameState.js';
 import { getDomUI } from './domUI.js';
+import {
+  isPanelOpen,
+  setPanelActive,
+  setPanelDirty,
+  setPanelStateText,
+} from './panelDock.js';
 
 const LOG_LINES = 5;
 let domHudInstance = null;
@@ -35,6 +41,9 @@ const createHudButton = (label, onClick) => {
       button.disabled = !enabled;
     },
     setVisible: (visible) => setVisible(button, visible),
+    setHighlighted: (highlighted) => {
+      button.classList.toggle('is-highlighted', Boolean(highlighted));
+    },
   };
 };
 
@@ -91,24 +100,146 @@ export const initDomHud = (state, callbacks) => {
   hudStatus.append(hudStatusRow, statusText);
 
   const actionGroup = createElement('div', 'hud-action-group');
-  const dayButtons = {
-    butcher: createHudButton('Collect: Butcher', callbacks.onCollectButcher),
-    tavern: createHudButton('Collect: Tavern', callbacks.onCollectTavern),
-    market: createHudButton('Collect: Market', callbacks.onCollectMarket),
-    feed: createHudButton('Feed Hyenas', callbacks.onFeedPack),
-    stabilize: createHudButton('Stabilize Camp', callbacks.onStabilizeCamp),
-    startNight: createHudButton('End Day (Start Night)', callbacks.onStartNight),
-  };
 
-  const nightButtons = {
-    clear: createHudButton('Clear Overgrowth', callbacks.onClearOvergrowth),
-    guard: createHudButton('Guard Route', callbacks.onGuardRoute),
-    suppress: createHudButton('Suppress Threat', callbacks.onSuppressThreat),
-    endNight: createHudButton('End Night', callbacks.onEndNight),
-  };
+  const actionsConfig = [
+    {
+      id: 'collect_butcher',
+      label: 'Collect: Butcher',
+      onClick: callbacks.onCollectButcher,
+      visibleWhen: (stateSnapshot, context) =>
+        stateSnapshot.phase === 'DAY' &&
+        context.nearButcher &&
+        !stateSnapshot.locationCollected.butcher,
+      enabledWhen: (stateSnapshot) =>
+        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
+      highlightWhen: (stateSnapshot, context) =>
+        stateSnapshot.dayActionsRemaining > 0 && context.nearButcher,
+    },
+    {
+      id: 'collect_tavern',
+      label: 'Collect: Tavern',
+      onClick: callbacks.onCollectTavern,
+      visibleWhen: (stateSnapshot, context) =>
+        stateSnapshot.phase === 'DAY' &&
+        context.nearTavern &&
+        !stateSnapshot.locationCollected.tavern,
+      enabledWhen: (stateSnapshot) =>
+        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
+      highlightWhen: (stateSnapshot, context) =>
+        stateSnapshot.dayActionsRemaining > 0 && context.nearTavern,
+    },
+    {
+      id: 'collect_market',
+      label: 'Collect: Market',
+      onClick: callbacks.onCollectMarket,
+      visibleWhen: (stateSnapshot, context) =>
+        stateSnapshot.phase === 'DAY' &&
+        context.nearMarket &&
+        !stateSnapshot.locationCollected.market,
+      enabledWhen: (stateSnapshot) =>
+        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
+      highlightWhen: (stateSnapshot, context) =>
+        stateSnapshot.dayActionsRemaining > 0 && context.nearMarket,
+    },
+    {
+      id: 'feed_pack',
+      label: 'Feed Hyenas',
+      onClick: callbacks.onFeedPack,
+      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'DAY',
+      enabledWhen: (stateSnapshot) =>
+        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
+      highlightWhen: (stateSnapshot) =>
+        stateSnapshot.dayActionsRemaining > 0 &&
+        stateSnapshot.pack.some((hyena) => hyena.hunger >= 60),
+    },
+    {
+      id: 'stabilize_camp',
+      label: 'Stabilize Camp',
+      onClick: callbacks.onStabilizeCamp,
+      visibleWhen: (stateSnapshot) =>
+        stateSnapshot.phase === 'DAY' && stateSnapshot.campActive,
+      enabledWhen: (stateSnapshot) =>
+        stateSnapshot.dayActionsRemaining > 0 &&
+        stateSnapshot.campActive &&
+        stateSnapshot.foodScraps >= 2 &&
+        !interactionLocked,
+      highlightWhen: (stateSnapshot) =>
+        stateSnapshot.campActive && stateSnapshot.campPressure >= 60,
+    },
+    {
+      id: 'start_night',
+      label: 'End Day (Start Night)',
+      onClick: callbacks.onStartNight,
+      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'DAY',
+      enabledWhen: () => !interactionLocked,
+      highlightWhen: (stateSnapshot) => stateSnapshot.dayActionsRemaining === 0,
+    },
+    {
+      id: 'clear_overgrowth',
+      label: 'Clear Overgrowth',
+      onClick: callbacks.onClearOvergrowth,
+      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
+      enabledWhen: (stateSnapshot, context) =>
+        !interactionLocked &&
+        context.inOvergrowthZone &&
+        stateSnapshot.packStamina >= 2,
+      highlightWhen: (stateSnapshot) => stateSnapshot.overgrowth >= 60,
+    },
+    {
+      id: 'guard_route',
+      label: 'Guard Route',
+      onClick: callbacks.onGuardRoute,
+      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
+      enabledWhen: (stateSnapshot, context) => {
+        const guardCost = Math.max(1, hasPackRole(stateSnapshot.pack, 'Scout') ? 1 : 2);
+        return (
+          !interactionLocked &&
+          context.inRouteZone &&
+          stateSnapshot.packStamina >= guardCost
+        );
+      },
+      highlightWhen: (stateSnapshot) => stateSnapshot.threatActive,
+    },
+    {
+      id: 'suppress_threat',
+      label: 'Suppress Threat',
+      onClick: callbacks.onSuppressThreat,
+      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
+      enabledWhen: (stateSnapshot, context) => {
+        const powerRequirement = hasPackRole(stateSnapshot.pack, 'Bruiser') ? 1 : 2;
+        return (
+          !interactionLocked &&
+          context.inThreatZone &&
+          stateSnapshot.threatActive &&
+          stateSnapshot.packStamina >= 3 &&
+          stateSnapshot.packPower >= powerRequirement
+        );
+      },
+      highlightWhen: (stateSnapshot) => stateSnapshot.threatActive,
+    },
+    {
+      id: 'end_night',
+      label: 'End Night',
+      onClick: callbacks.onEndNight,
+      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
+      enabledWhen: () => !interactionLocked,
+      highlightWhen: (stateSnapshot) =>
+        stateSnapshot.packStamina === 0 || !stateSnapshot.threatActive,
+    },
+  ];
 
-  Object.values(dayButtons).forEach((button) => actionGroup.appendChild(button.el));
-  Object.values(nightButtons).forEach((button) => actionGroup.appendChild(button.el));
+  const actionButtons = new Map();
+  const actionVisibility = new Map();
+
+  actionsConfig.forEach((action) => {
+    const button = createHudButton(action.label, action.onClick);
+    actionGroup.appendChild(button.el);
+    actionButtons.set(action.id, {
+      ...action,
+      button,
+    });
+    actionVisibility.set(action.id, false);
+  });
 
   actionsPanel.append(hudStatus, actionGroup);
 
@@ -277,6 +408,12 @@ export const initDomHud = (state, callbacks) => {
   let interactionLocked = false;
   let lastEventCount = 0;
   let statusFlashTimer = null;
+  let lastMeterSnapshot = null;
+  let lastMeterChangeAt = 0;
+  let lastPackSnapshot = null;
+  let lastPackChangeAt = 0;
+  let lastPackFood = null;
+  let lastPackVisible = false;
 
   const updateFeedPanel = (stateSnapshot) => {
     const maxScraps = stateSnapshot.foodScraps;
@@ -343,65 +480,25 @@ export const initDomHud = (state, callbacks) => {
   };
 
   const updateButtons = (stateSnapshot, context) => {
-    const isDay = stateSnapshot.phase === 'DAY';
-    const isNight = stateSnapshot.phase === 'NIGHT';
+    actionButtons.forEach((action, actionId) => {
+      const isVisible = action.visibleWhen?.(stateSnapshot, context) ?? true;
+      const wasVisible = actionVisibility.get(actionId) ?? false;
+      action.button.setVisible(isVisible);
+      actionVisibility.set(actionId, isVisible);
 
-    Object.values(dayButtons).forEach((button) => button.setVisible(isDay));
-    Object.values(nightButtons).forEach((button) => button.setVisible(isNight));
+      if (isVisible && !wasVisible && !isPanelOpen('actions')) {
+        setPanelDirty('actions', true, { increment: 1 });
+      }
 
-    if (isDay) {
-      dayButtons.butcher.setEnabled(
-        !interactionLocked &&
-          stateSnapshot.dayActionsRemaining > 0 &&
-          context.nearButcher &&
-          !stateSnapshot.locationCollected.butcher
-      );
-      dayButtons.tavern.setEnabled(
-        !interactionLocked &&
-          stateSnapshot.dayActionsRemaining > 0 &&
-          context.nearTavern &&
-          !stateSnapshot.locationCollected.tavern
-      );
-      dayButtons.market.setEnabled(
-        !interactionLocked &&
-          stateSnapshot.dayActionsRemaining > 0 &&
-          context.nearMarket &&
-          !stateSnapshot.locationCollected.market
-      );
-      dayButtons.feed.setEnabled(
-        !interactionLocked && stateSnapshot.dayActionsRemaining > 0
-      );
-      dayButtons.stabilize.setEnabled(
-        !interactionLocked &&
-          stateSnapshot.dayActionsRemaining > 0 &&
-          stateSnapshot.campActive &&
-          stateSnapshot.foodScraps >= 2
-      );
-      dayButtons.startNight.setEnabled(!interactionLocked);
-    }
+      if (!isVisible) {
+        return;
+      }
 
-    if (isNight) {
-      const guardCost = Math.max(1, hasPackRole(stateSnapshot.pack, 'Scout') ? 1 : 2);
-      const powerRequirement = hasPackRole(stateSnapshot.pack, 'Bruiser') ? 1 : 2;
-      nightButtons.clear.setEnabled(
-        !interactionLocked &&
-          context.inOvergrowthZone &&
-          stateSnapshot.packStamina >= 2
-      );
-      nightButtons.guard.setEnabled(
-        !interactionLocked &&
-          context.inRouteZone &&
-          stateSnapshot.packStamina >= guardCost
-      );
-      nightButtons.suppress.setEnabled(
-        !interactionLocked &&
-          context.inThreatZone &&
-          stateSnapshot.threatActive &&
-          stateSnapshot.packStamina >= 3 &&
-          stateSnapshot.packPower >= powerRequirement
-      );
-      nightButtons.endNight.setEnabled(!interactionLocked);
-    }
+      const isEnabled = action.enabledWhen?.(stateSnapshot, context) ?? true;
+      const isHighlighted = action.highlightWhen?.(stateSnapshot, context) ?? false;
+      action.button.setEnabled(isEnabled);
+      action.button.setHighlighted(isHighlighted);
+    });
 
     updateFeedPanel(stateSnapshot);
   };
@@ -411,6 +508,28 @@ export const initDomHud = (state, callbacks) => {
     overgrowthMeter.update(stateSnapshot.overgrowth, 100);
     campMeter.update(stateSnapshot.campActive ? stateSnapshot.campPressure : 0, 100);
     threatMeter.update(stateSnapshot.threatActive ? 100 : 0, 100);
+
+    const snapshot = {
+      tension: stateSnapshot.tension,
+      overgrowth: stateSnapshot.overgrowth,
+      camp: stateSnapshot.campActive ? stateSnapshot.campPressure : 0,
+      threat: stateSnapshot.threatActive ? 100 : 0,
+    };
+
+    if (lastMeterSnapshot) {
+      const changed =
+        snapshot.tension !== lastMeterSnapshot.tension ||
+        snapshot.overgrowth !== lastMeterSnapshot.overgrowth ||
+        snapshot.camp !== lastMeterSnapshot.camp ||
+        snapshot.threat !== lastMeterSnapshot.threat;
+      if (changed) {
+        lastMeterChangeAt = window.performance.now();
+        if (!isPanelOpen('meters')) {
+          setPanelDirty('meters', true);
+        }
+      }
+    }
+    lastMeterSnapshot = snapshot;
   };
 
   const updatePackPanel = (stateSnapshot) => {
@@ -441,6 +560,46 @@ export const initDomHud = (state, callbacks) => {
       card.contributionText.textContent =
         `Tonight: +${contribution.stamina} STA / +${contribution.power} POW`;
     });
+
+    const packSnapshot = stateSnapshot.pack.map((hyena) => ({
+      id: hyena.id,
+      hunger: hyena.hunger,
+      role: hyena.role,
+    }));
+
+    if (lastPackSnapshot) {
+      const changed = packSnapshot.some((member, index) => {
+        const prev = lastPackSnapshot[index];
+        if (!prev) {
+          return true;
+        }
+        return member.hunger !== prev.hunger || member.role !== prev.role;
+      });
+      if (changed) {
+        lastPackChangeAt = window.performance.now();
+        if (!isPanelOpen('pack')) {
+          setPanelDirty('pack', true);
+        }
+      }
+    }
+    lastPackSnapshot = packSnapshot;
+
+    const foodSnapshot = {
+      scraps: stateSnapshot.foodScraps,
+      fatty: stateSnapshot.foodFatty,
+    };
+    if (lastPackFood) {
+      if (
+        foodSnapshot.scraps !== lastPackFood.scraps ||
+        foodSnapshot.fatty !== lastPackFood.fatty
+      ) {
+        lastPackChangeAt = window.performance.now();
+        if (!isPanelOpen('pack')) {
+          setPanelDirty('pack', true);
+        }
+      }
+    }
+    lastPackFood = foodSnapshot;
   };
 
   const updateLog = (stateSnapshot) => {
@@ -481,12 +640,37 @@ export const initDomHud = (state, callbacks) => {
       updateMeters(stateSnapshot);
       updatePackPanel(stateSnapshot);
       updateLog(stateSnapshot);
+
+      setPanelStateText('actions', stateSnapshot.phase === 'DAY' ? 'DAY' : 'NIGHT');
+      setPanelStateText(
+        'pack',
+        stateSnapshot.phase === 'DAY'
+          ? `Scraps ${stateSnapshot.foodScraps}`
+          : `Stamina ${stateSnapshot.packStamina}`
+      );
+      setPanelStateText('meters', stateSnapshot.threatActive ? 'Alert' : 'Stable');
+
+      const now = window.performance.now();
+      const metersActive =
+        now - lastMeterChangeAt < 2000 ||
+        stateSnapshot.tension >= 80 ||
+        stateSnapshot.overgrowth >= 80 ||
+        (stateSnapshot.campActive && stateSnapshot.campPressure >= 70) ||
+        stateSnapshot.threatActive;
+      const packActive =
+        now - lastPackChangeAt < 2000 ||
+        lastPackVisible ||
+        stateSnapshot.pack.some((hyena) => hyena.hunger >= 70);
+      setPanelActive('meters', metersActive);
+      setPanelActive('pack', packActive);
     },
     toggleFeedPanel: (show) => {
       feedPanel.classList.toggle('hidden', !show);
+      lastPackVisible = show;
     },
     hideFeedPanel: () => {
       feedPanel.classList.add('hidden');
+      lastPackVisible = false;
     },
     isFeedPanelVisible: () => !feedPanel.classList.contains('hidden'),
     setInteractionLocked: (locked) => {
