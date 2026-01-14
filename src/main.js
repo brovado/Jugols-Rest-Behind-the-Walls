@@ -3,8 +3,10 @@ import TitleScene from './scenes/TitleScene.js';
 import IntroScene from './scenes/IntroScene.js';
 import GameScene from './scenes/GameScene.js';
 import { initDomUI } from './ui/domUI.js';
+import { initPanelDock } from './ui/panelDock.js';
 
 initDomUI();
+initPanelDock();
 
 const config = {
   type: Phaser.AUTO,

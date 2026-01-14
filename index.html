@@ -48,6 +48,15 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: #cbd5f5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .panel-header .panel-state-text {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      color: #94a3b8;
     }
     .panel-body {
       padding: 12px 14px;
@@ -85,6 +94,91 @@
     }
     .sidebar-panel + .sidebar-panel {
       margin-top: 12px;
+    }
+    #ui-dock-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      padding: 8px;
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+    }
+    .ui-dock-tab {
+      position: relative;
+      background: #0f172a;
+      border: 1px solid #1f2937;
+      color: #cbd5f5;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+    }
+    .ui-dock-tab.is-open {
+      border-color: #38bdf8;
+      color: #f8fafc;
+    }
+    .ui-dock-tab.is-active {
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4), 0 0 10px rgba(56, 189, 248, 0.25);
+    }
+    .ui-dock-tab.is-disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .ui-dock-tab-badge {
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      min-width: 8px;
+      height: 8px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: #f97316;
+      color: #0b1220;
+      font-size: 9px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      opacity: 0;
+      transform: scale(0.8);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .ui-dock-tab-badge.is-visible {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .ui-dock-tab-badge.is-dot {
+      padding: 0;
+      min-width: 6px;
+      height: 6px;
+    }
+    .ui-drawer {
+      overflow: hidden;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .ui-drawer.is-active {
+      border-color: rgba(56, 189, 248, 0.6);
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.15);
+    }
+    .ui-drawer-header {
+      cursor: pointer;
+    }
+    .ui-drawer-body {
+      overflow: hidden;
+      height: auto;
+      opacity: 1;
+      transition: height 0.25s ease, opacity 0.2s ease;
+    }
+    .ui-drawer.is-collapsed .ui-drawer-body {
+      opacity: 0;
     }
     #actions-panel,
     #status-panel,
@@ -144,6 +238,11 @@
     .hud-button:hover:not(:disabled) {
       border-color: #38bdf8;
       color: #f8fafc;
+    }
+    .hud-button.is-highlighted {
+      border-color: #facc15;
+      box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.35), 0 0 10px rgba(250, 204, 21, 0.2);
+      color: #fef9c3;
     }
     .hud-button:disabled {
       cursor: not-allowed;
@@ -335,25 +434,62 @@
       </section>
     </div>
     <aside class="column">
-      <section class="panel sidebar-panel">
-        <div class="panel-header">Actions</div>
-        <div class="panel-body" id="actions-panel"></div>
+      <div id="ui-dock-tabs">
+        <button class="ui-dock-tab" type="button" data-panel="actions">
+          Actions
+          <span class="ui-dock-tab-badge" data-badge></span>
+        </button>
+        <button class="ui-dock-tab" type="button" data-panel="pack">
+          Pack
+          <span class="ui-dock-tab-badge" data-badge></span>
+        </button>
+        <button class="ui-dock-tab" type="button" data-panel="meters">
+          Meters
+          <span class="ui-dock-tab-badge" data-badge></span>
+        </button>
+        <button class="ui-dock-tab" type="button" data-panel="controls">
+          Controls
+          <span class="ui-dock-tab-badge" data-badge></span>
+        </button>
+        <button class="ui-dock-tab" type="button" data-panel="status">
+          Status
+          <span class="ui-dock-tab-badge" data-badge></span>
+        </button>
+      </div>
+      <section id="panel-actions" class="panel sidebar-panel ui-drawer" data-panel="actions">
+        <div class="panel-header ui-drawer-header">
+          <span>Actions</span>
+          <span class="panel-state-text" data-panel-state></span>
+        </div>
+        <div class="panel-body ui-drawer-body" id="actions-panel"></div>
       </section>
-      <section class="panel sidebar-panel">
-        <div class="panel-header">Pack</div>
-        <div class="panel-body" id="pack-panel"></div>
+      <section id="panel-pack" class="panel sidebar-panel ui-drawer" data-panel="pack">
+        <div class="panel-header ui-drawer-header">
+          <span>Pack</span>
+          <span class="panel-state-text" data-panel-state></span>
+        </div>
+        <div class="panel-body ui-drawer-body" id="pack-panel"></div>
       </section>
-      <section class="panel sidebar-panel">
-        <div class="panel-header">Meters</div>
-        <div class="panel-body" id="meters-panel"></div>
+      <section id="panel-meters" class="panel sidebar-panel ui-drawer" data-panel="meters">
+        <div class="panel-header ui-drawer-header">
+          <span>Meters</span>
+          <span class="panel-state-text" data-panel-state></span>
+        </div>
+        <div class="panel-body ui-drawer-body" id="meters-panel"></div>
       </section>
-      <section class="panel sidebar-panel">
-        <div class="panel-header">Controls</div>
-        <div class="panel-body" id="controls-panel"></div>
+      <section id="panel-controls" class="panel sidebar-panel ui-drawer" data-panel="controls">
+        <div class="panel-header ui-drawer-header">
+          <span>Controls</span>
+          <span class="panel-state-text" data-panel-state></span>
+        </div>
+        <div class="panel-body ui-drawer-body" id="controls-panel"></div>
       </section>
-      <section class="panel sidebar-panel">
-        <div class="panel-header">Status</div>
-        <div class="panel-body" id="status-panel"></div>
+      <section id="panel-status" class="panel sidebar-panel ui-drawer" data-panel="status">
+        <div class="panel-header ui-drawer-header">
+          <span>Status</span>
+          <span class="panel-state-text" data-panel-state></span>
+        </div>
+        <div class="panel-body ui-drawer-body" id="status-panel"></div>
       </section>
     </aside>
   </div>
