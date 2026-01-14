@@ -1,4 +1,5 @@
 import { createButton, createPanel, createMeter } from './components.js';
+import { getHyenaContribution, hasPackRole } from '../state/gameState.js';
 
 const LOG_LINES = 5;
 
@@ -49,6 +50,14 @@ export const createHud = (scene, state, callbacks) => {
     title: 'Meters',
   });
 
+  const packPanel = createPanel(scene, {
+    x: 316,
+    y: 70,
+    width: 360,
+    height: 260,
+    title: 'THE PACK',
+  });
+
   const logPanel = createPanel(scene, {
     x: 16,
     y: height - 160,
@@ -90,7 +99,7 @@ export const createHud = (scene, state, callbacks) => {
       x: 20,
       y: 196,
       width: 240,
-      label: 'Feed Pack',
+      label: 'Feed Hyenas',
       onClick: callbacks.onFeedPack,
     }),
     stabilize: createButton(scene, {
@@ -147,69 +156,220 @@ export const createHud = (scene, state, callbacks) => {
 
   const feedPanel = createPanel(scene, {
     x: 316,
-    y: 120,
-    width: 220,
-    height: 220,
-    title: 'Feed Pack',
+    y: 340,
+    width: 360,
+    height: 200,
+    title: 'Feed Hyenas',
   });
   feedPanel.container.setVisible(false);
 
-  const scrapsText = scene.add.text(16, 56, 'Scraps: 0', {
+  const scrapsText = scene.add.text(16, 10, 'Scraps: 0', {
     fontSize: '13px',
     color: '#e2e8f0',
   });
-  const fattyText = scene.add.text(16, 82, 'Fatty: 0', {
+  const fattyText = scene.add.text(180, 10, 'Fatty: 0', {
     fontSize: '13px',
     color: '#e2e8f0',
   });
   feedPanel.body.add([scrapsText, fattyText]);
 
-  const panelState = { scraps: 0, fatty: 0 };
+  const panelState = { allocations: {} };
 
-  const makeAdjustButton = (x, y, label, onClick) => {
-    const btn = createButton(scene, {
+  // Pack panel shows the three hyenas plus tonight's contributions.
+  const packSummaryText = scene.add.text(16, 6, '', {
+    fontSize: '13px',
+    color: '#cbd5f5',
+  });
+  packPanel.body.add(packSummaryText);
+
+  const packCards = new Map();
+
+  const createHyenaCard = (hyena, index) => {
+    const y = 28 + index * 70;
+    const card = scene.add.container(16, y);
+    const bg = scene.add
+      .rectangle(0, 0, 328, 64, 0x0f172a, 0.9)
+      .setOrigin(0, 0)
+      .setStrokeStyle(1, 0x1f2937, 1);
+    const nameText = scene.add.text(10, 6, hyena.name, {
+      fontSize: '15px',
+      color: '#f8fafc',
+      fontStyle: 'bold',
+    });
+    const roleText = scene.add.text(328 - 10, 6, hyena.role, {
+      fontSize: '13px',
+      color: '#94a3b8',
+    }).setOrigin(1, 0);
+    const temperamentText = scene.add.text(10, 26, hyena.temperament, {
+      fontSize: '12px',
+      color: '#94a3b8',
+    });
+    const hungerLabel = scene.add.text(10, 44, 'Hunger', {
+      fontSize: '11px',
+      color: '#cbd5f5',
+    });
+    const hungerBg = scene.add
+      .rectangle(58, 48, 120, 10, 0x111827, 0.9)
+      .setOrigin(0, 0)
+      .setStrokeStyle(1, 0x1f2937, 1);
+    const hungerFill = scene.add
+      .rectangle(58, 48, 0, 10, 0xf59e0b, 0.95)
+      .setOrigin(0, 0);
+    const contributionText = scene.add.text(328 - 10, 42, '', {
+      fontSize: '12px',
+      color: '#e2e8f0',
+    }).setOrigin(1, 0);
+
+    card.add([
+      bg,
+      nameText,
+      roleText,
+      temperamentText,
+      hungerLabel,
+      hungerBg,
+      hungerFill,
+      contributionText,
+    ]);
+    packPanel.body.add(card);
+
+    return {
+      card,
+      nameText,
+      roleText,
+      temperamentText,
+      hungerFill,
+      contributionText,
+    };
+  };
+
+  const initializePackCards = (stateSnapshot) => {
+    packCards.clear();
+    if (!Array.isArray(stateSnapshot.pack)) {
+      return;
+    }
+    stateSnapshot.pack.forEach((hyena, index) => {
+      packCards.set(hyena.id, createHyenaCard(hyena, index));
+      panelState.allocations[hyena.id] = { scraps: 0, fatty: 0 };
+    });
+  };
+
+  initializePackCards(state);
+
+  const makeAdjustButton = (x, y, label, onClick) =>
+    createButton(scene, {
       x,
       y,
-      width: 90,
-      height: 30,
+      width: 34,
+      height: 24,
       label,
       onClick,
     });
-    return btn;
+
+  const feedRows = [];
+
+  const createFeedRow = (hyena, index) => {
+    const rowY = 36 + index * 46;
+    const name = scene.add.text(16, rowY + 4, hyena.name, {
+      fontSize: '13px',
+      color: '#f8fafc',
+    });
+    const scrapsValue = scene.add.text(120, rowY + 4, 'Scraps: 0', {
+      fontSize: '12px',
+      color: '#cbd5f5',
+    });
+    const fattyValue = scene.add.text(120, rowY + 22, 'Fatty: 0', {
+      fontSize: '12px',
+      color: '#cbd5f5',
+    });
+
+    const scrapsMinus = makeAdjustButton(220, rowY, '-', () => {
+      panelState.allocations[hyena.id].scraps = Math.max(
+        0,
+        panelState.allocations[hyena.id].scraps - 1
+      );
+    });
+    const scrapsPlus = makeAdjustButton(258, rowY, '+', () => {
+      panelState.allocations[hyena.id].scraps += 1;
+    });
+    const fattyMinus = makeAdjustButton(220, rowY + 20, '-', () => {
+      panelState.allocations[hyena.id].fatty = Math.max(
+        0,
+        panelState.allocations[hyena.id].fatty - 1
+      );
+    });
+    const fattyPlus = makeAdjustButton(258, rowY + 20, '+', () => {
+      panelState.allocations[hyena.id].fatty += 1;
+    });
+
+    feedPanel.body.add([
+      name,
+      scrapsValue,
+      fattyValue,
+      scrapsMinus,
+      scrapsPlus,
+      fattyMinus,
+      fattyPlus,
+    ]);
+
+    return {
+      name,
+      scrapsValue,
+      fattyValue,
+      scrapsMinus,
+      scrapsPlus,
+      fattyMinus,
+      fattyPlus,
+      hyenaId: hyena.id,
+    };
   };
 
-  const scrapsMinus = makeAdjustButton(16, 112, '- Scraps', () => {
-    panelState.scraps = Math.max(0, panelState.scraps - 1);
+  const initializeFeedRows = (stateSnapshot) => {
+    feedRows.length = 0;
+    if (!Array.isArray(stateSnapshot.pack)) {
+      return;
+    }
+    stateSnapshot.pack.forEach((hyena, index) => {
+      feedRows.push(createFeedRow(hyena, index));
+    });
+  };
+
+  initializeFeedRows(state);
+
+  const confirmButton = createButton(scene, {
+    x: 16,
+    y: 172,
+    width: 150,
+    height: 24,
+    label: 'Confirm Feeding',
+    onClick: () => {
+      const feedPlan = Object.entries(panelState.allocations).map(([id, alloc]) => ({
+        id,
+        scraps: alloc.scraps,
+        fatty: alloc.fatty,
+      }));
+      callbacks.onConfirmFeed(feedPlan);
+      Object.values(panelState.allocations).forEach((alloc) => {
+        alloc.scraps = 0;
+        alloc.fatty = 0;
+      });
+    },
   });
-  const scrapsPlus = makeAdjustButton(112, 112, '+ Scraps', () => {
-    panelState.scraps += 1;
-  });
-  const fattyMinus = makeAdjustButton(16, 146, '- Fatty', () => {
-    panelState.fatty = Math.max(0, panelState.fatty - 1);
-  });
-  const fattyPlus = makeAdjustButton(112, 146, '+ Fatty', () => {
-    panelState.fatty += 1;
+  const cancelButton = createButton(scene, {
+    x: 186,
+    y: 172,
+    width: 150,
+    height: 24,
+    label: 'Cancel',
+    onClick: () => {
+      Object.values(panelState.allocations).forEach((alloc) => {
+        alloc.scraps = 0;
+        alloc.fatty = 0;
+      });
+      feedPanel.container.setVisible(false);
+    },
   });
 
-  const confirmButton = makeAdjustButton(16, 180, 'Confirm', () => {
-    callbacks.onConfirmFeed(panelState.scraps, panelState.fatty);
-    panelState.scraps = 0;
-    panelState.fatty = 0;
-  });
-  const cancelButton = makeAdjustButton(112, 180, 'Cancel', () => {
-    panelState.scraps = 0;
-    panelState.fatty = 0;
-    feedPanel.container.setVisible(false);
-  });
-
-  feedPanel.body.add([
-    scrapsMinus,
-    scrapsPlus,
-    fattyMinus,
-    fattyPlus,
-    confirmButton,
-    cancelButton,
-  ]);
+  feedPanel.body.add([confirmButton, cancelButton]);
 
   const meterSpacing = 64;
   const tensionMeter = createMeter(scene, {
@@ -251,6 +411,7 @@ export const createHud = (scene, state, callbacks) => {
   hud.add([
     topBar,
     leftPanel.container,
+    packPanel.container,
     rightPanel.container,
     logPanel.container,
     feedPanel.container,
@@ -261,10 +422,53 @@ export const createHud = (scene, state, callbacks) => {
   const updateFeedPanel = (stateSnapshot) => {
     const maxScraps = stateSnapshot.foodScraps;
     const maxFatty = stateSnapshot.foodFatty;
-    panelState.scraps = Math.min(panelState.scraps, maxScraps);
-    panelState.fatty = Math.min(panelState.fatty, maxFatty);
-    scrapsText.setText(`Scraps: ${panelState.scraps} / ${maxScraps}`);
-    fattyText.setText(`Fatty: ${panelState.fatty} / ${maxFatty}`);
+    const canInteract = !interactionLocked;
+    const allocations = Object.values(panelState.allocations);
+    const sumAllocated = (key) => allocations.reduce((sum, alloc) => sum + (alloc[key] || 0), 0);
+    const trimAllocations = (key, max) => {
+      let total = sumAllocated(key);
+      if (total <= max) {
+        return;
+      }
+      let excess = total - max;
+      allocations.forEach((alloc) => {
+        if (excess <= 0) {
+          return;
+        }
+        const reduction = Math.min(excess, alloc[key]);
+        alloc[key] -= reduction;
+        excess -= reduction;
+      });
+    };
+
+    trimAllocations('scraps', maxScraps);
+    trimAllocations('fatty', maxFatty);
+
+    const allocatedScraps = sumAllocated('scraps');
+    const allocatedFatty = sumAllocated('fatty');
+
+    scrapsText.setText(`Scraps: ${allocatedScraps} / ${maxScraps}`);
+    fattyText.setText(`Fatty: ${allocatedFatty} / ${maxFatty}`);
+
+    feedRows.forEach((row) => {
+      const alloc = panelState.allocations[row.hyenaId];
+      if (!alloc) {
+        return;
+      }
+      row.scrapsValue.setText(`Scraps: ${alloc.scraps}`);
+      row.fattyValue.setText(`Fatty: ${alloc.fatty}`);
+      row.scrapsMinus.setEnabled(canInteract && alloc.scraps > 0);
+      row.scrapsPlus.setEnabled(canInteract && allocatedScraps < maxScraps);
+      row.fattyMinus.setEnabled(canInteract && alloc.fatty > 0);
+      row.fattyPlus.setEnabled(canInteract && allocatedFatty < maxFatty);
+    });
+
+    confirmButton.setEnabled(
+      canInteract &&
+        (allocatedScraps > 0 || allocatedFatty > 0) &&
+        stateSnapshot.dayActionsRemaining > 0
+    );
+    cancelButton.setEnabled(canInteract);
   };
 
   const updateTopBar = (stateSnapshot) => {
@@ -276,7 +480,7 @@ export const createHud = (scene, state, callbacks) => {
     statusText.setText(
       stateSnapshot.phase === 'DAY'
         ? `Actions Remaining: ${stateSnapshot.dayActionsRemaining}`
-        : `Night Stamina: ${stateSnapshot.hyenaStamina} | Power: ${stateSnapshot.hyenaPower}`
+        : `Pack Stamina: ${stateSnapshot.packStamina} | Power: ${stateSnapshot.packPower}`
     );
   };
 
@@ -306,7 +510,9 @@ export const createHud = (scene, state, callbacks) => {
           context.nearMarket &&
           !stateSnapshot.locationCollected.market
       );
-      dayButtons.feed.setEnabled(!interactionLocked && stateSnapshot.dayActionsRemaining > 0);
+      dayButtons.feed.setEnabled(
+        !interactionLocked && stateSnapshot.dayActionsRemaining > 0
+      );
       dayButtons.stabilize.setEnabled(
         !interactionLocked &&
           stateSnapshot.dayActionsRemaining > 0 &&
@@ -317,22 +523,24 @@ export const createHud = (scene, state, callbacks) => {
     }
 
     if (isNight) {
+      const guardCost = Math.max(1, hasPackRole(stateSnapshot.pack, 'Scout') ? 1 : 2);
+      const powerRequirement = hasPackRole(stateSnapshot.pack, 'Bruiser') ? 1 : 2;
       nightButtons.clear.setEnabled(
         !interactionLocked &&
           context.inOvergrowthZone &&
-          stateSnapshot.hyenaStamina >= 2
+          stateSnapshot.packStamina >= 2
       );
       nightButtons.guard.setEnabled(
         !interactionLocked &&
           context.inRouteZone &&
-          stateSnapshot.hyenaStamina >= 2
+          stateSnapshot.packStamina >= guardCost
       );
       nightButtons.suppress.setEnabled(
         !interactionLocked &&
           context.inThreatZone &&
           stateSnapshot.threatActive &&
-          stateSnapshot.hyenaStamina >= 3 &&
-          stateSnapshot.hyenaPower >= 2
+          stateSnapshot.packStamina >= 3 &&
+          stateSnapshot.packPower >= powerRequirement
       );
       nightButtons.endNight.setEnabled(!interactionLocked);
     }
@@ -347,6 +555,33 @@ export const createHud = (scene, state, callbacks) => {
     threatMeter.update(stateSnapshot.threatActive ? 100 : 0, 100);
   };
 
+  const updatePackPanel = (stateSnapshot) => {
+    if (!Array.isArray(stateSnapshot.pack)) {
+      return;
+    }
+    packSummaryText.setText(
+      stateSnapshot.phase === 'NIGHT'
+        ? `Tonight: ${stateSnapshot.packStamina} Stamina | ${stateSnapshot.packPower} Power`
+        : 'Tonight’s contributions:'
+    );
+
+    stateSnapshot.pack.forEach((hyena) => {
+      const card = packCards.get(hyena.id);
+      if (!card) {
+        return;
+      }
+      const hungerRatio = Math.max(0, Math.min(100, hyena.hunger)) / 100;
+      card.hungerFill.setSize(120 * hungerRatio, 10);
+      card.nameText.setText(hyena.name);
+      card.roleText.setText(hyena.role);
+      card.temperamentText.setText(hyena.temperament);
+      const contribution = getHyenaContribution(hyena);
+      card.contributionText.setText(
+        `Tonight: +${contribution.stamina} STA / +${contribution.power} POW`
+      );
+    });
+  };
+
   const updateLog = (stateSnapshot) => {
     const entries = stateSnapshot.eventLog || [];
     const latest = entries.slice(-LOG_LINES).map((entry) => `• ${entry}`);
@@ -358,6 +593,7 @@ export const createHud = (scene, state, callbacks) => {
       updateTopBar(stateSnapshot);
       updateButtons(stateSnapshot, context);
       updateMeters(stateSnapshot);
+      updatePackPanel(stateSnapshot);
       updateLog(stateSnapshot);
     },
     toggleFeedPanel: (show) => {
@@ -369,6 +605,53 @@ export const createHud = (scene, state, callbacks) => {
     isFeedPanelVisible: () => feedPanel.container.visible,
     setInteractionLocked: (locked) => {
       interactionLocked = locked;
+    },
+    playFeedAnimations: (feedPlan) => {
+      if (!Array.isArray(feedPlan) || feedPlan.length === 0) {
+        return;
+      }
+      // Simple tweened token to sell the feeding action.
+      const feedOrigin = feedPanel.container.getBounds();
+      feedPlan.forEach((entry) => {
+        const total = (entry.scraps || 0) + (entry.fatty || 0);
+        if (total <= 0) {
+          return;
+        }
+        const card = packCards.get(entry.id);
+        if (!card) {
+          return;
+        }
+        const target = card.card.getBounds();
+        const token = scene.add
+          .circle(feedOrigin.centerX, feedOrigin.centerY, 6, 0xfacc15, 0.9)
+          .setScrollFactor(0)
+          .setDepth(20);
+        scene.tweens.add({
+          targets: token,
+          x: target.centerX,
+          y: target.centerY,
+          scale: 0.2,
+          alpha: 0,
+          duration: 450,
+          ease: 'Cubic.easeIn',
+          onComplete: () => token.destroy(),
+        });
+      });
+    },
+    flashNightStats: () => {
+      if (statusText.alpha <= 0) {
+        return;
+      }
+      statusText.setTint(0xfacc15);
+      scene.tweens.add({
+        targets: statusText,
+        scale: 1.08,
+        duration: 120,
+        yoyo: true,
+        repeat: 2,
+        ease: 'Sine.easeInOut',
+        onComplete: () => statusText.clearTint(),
+      });
     },
   };
 };

@@ -1,5 +1,6 @@
 import BootScene from './scenes/BootScene.js';
 import TitleScene from './scenes/TitleScene.js';
+import IntroScene from './scenes/IntroScene.js';
 import GameScene from './scenes/GameScene.js';
 
 const config = {
@@ -15,7 +16,7 @@ const config = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, GameScene],
+  scene: [BootScene, TitleScene, IntroScene, GameScene],
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
