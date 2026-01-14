@@ -13,7 +13,7 @@ import {
   saveGameState,
   loadGameState,
 } from '../state/gameState.js';
-import { createHud } from '../ui/hud.js';
+import { getDomUI } from '../ui/domUI.js';
 import { moveToward } from '../utils/pathing.js';
 
 const WORLD_WIDTH = 2000;
@@ -35,6 +35,9 @@ export default class GameScene extends Phaser.Scene {
     this.victoryOverlay = null;
     this.gameOverOverlay = null;
     this.inputLocked = false;
+    this.domUI = null;
+    this.autoMoveEnabled = true;
+    this.lastPosition = null;
   }
 
   create(data = {}) {
@@ -53,14 +56,16 @@ export default class GameScene extends Phaser.Scene {
     this.setupPlayer();
     this.setupMarkers();
     this.setupInput();
-    this.setupHud();
+    this.setupDomUI();
     this.setupOverlays();
 
     this.updateHud();
     this.cameras.main.fadeIn(500, 0, 0, 0);
 
     this.inputLocked = false;
-    this.hud.setInteractionLocked(false);
+    if (this.hud) {
+      this.hud.setInteractionLocked(false);
+    }
   }
 
   setupWorld() {
@@ -116,26 +121,34 @@ export default class GameScene extends Phaser.Scene {
       if (pointer.event?.cancelBubble || pointer.event?.defaultPrevented) {
         return;
       }
+      if (!this.autoMoveEnabled) {
+        return;
+      }
       const worldPoint = pointer.positionToCamera(this.cameras.main);
       this.targetPoint = { x: worldPoint.x, y: worldPoint.y };
       this.targetMarker.setPosition(worldPoint.x, worldPoint.y).setVisible(true);
+      this.appendLog(`Target set at (${worldPoint.x.toFixed(0)}, ${worldPoint.y.toFixed(0)}).`);
     });
   }
 
-  setupHud() {
-    this.hud = createHud(this, this.state, {
-      onCollectButcher: () => this.handleCollect('butcher'),
-      onCollectTavern: () => this.handleCollect('tavern'),
-      onCollectMarket: () => this.handleCollect('market'),
-      onFeedPack: () => this.toggleFeedPanel(),
-      onConfirmFeed: (feedPlan) => this.handleFeed(feedPlan),
-      onStabilizeCamp: () => this.handleStabilizeCamp(),
-      onStartNight: () => this.handleStartNight(),
-      onClearOvergrowth: () => this.handleClearOvergrowth(),
-      onGuardRoute: () => this.handleGuardRoute(),
-      onSuppressThreat: () => this.handleSuppressThreat(),
-      onEndNight: () => this.handleEndNight(),
+  setupDomUI() {
+    this.domUI = getDomUI();
+    if (!this.domUI) {
+      return;
+    }
+    this.domUI.setActionHandlers({
+      onAutoMoveToggle: (enabled) => {
+        this.autoMoveEnabled = enabled;
+        this.appendLog(`Auto-move ${enabled ? 'enabled' : 'disabled'}.`);
+        if (!enabled) {
+          this.resetTarget();
+        }
+      },
+      onResetTarget: () => this.resetTarget(),
+      onCenterCamera: () => this.centerCamera(),
     });
+    this.domUI.setAutoMove(this.autoMoveEnabled);
+    this.appendLog('Entered Jugol’s Rest. Click to move.');
   }
 
   setupOverlays() {
@@ -244,6 +257,7 @@ export default class GameScene extends Phaser.Scene {
       this.handleMovement(delta);
     }
     this.updateHud();
+    this.updateStatus(delta);
   }
 
   handleMovement(delta) {
@@ -277,6 +291,7 @@ export default class GameScene extends Phaser.Scene {
       if (next.arrived) {
         this.targetPoint = null;
         this.targetMarker.setVisible(false);
+        this.appendLog('Reached target.');
       }
     }
 
@@ -293,7 +308,9 @@ export default class GameScene extends Phaser.Scene {
       inRouteZone: this.isInZone('route'),
       inThreatZone: this.isInZone('threat'),
     };
-    this.hud.update(this.state, context);
+    if (this.hud) {
+      this.hud.update(this.state, context);
+    }
 
     if (this.state.victory) {
       this.victoryOverlay.setVisible(true);
@@ -352,7 +369,9 @@ export default class GameScene extends Phaser.Scene {
         market: 'Collected supplies from the Market.',
       };
       addEvent(this.state, labels[locationKey] || 'Collected supplies.');
-      this.hud.hideFeedPanel();
+      if (this.hud) {
+        this.hud.hideFeedPanel();
+      }
       this.updateHud();
     }
   }
@@ -371,8 +390,10 @@ export default class GameScene extends Phaser.Scene {
           `Fed ${name} (${entry.scraps || 0} scraps, ${entry.fatty || 0} fatty).`
         );
       });
-      this.hud.hideFeedPanel();
-      this.hud.playFeedAnimations(feedPlan);
+      if (this.hud) {
+        this.hud.hideFeedPanel();
+        this.hud.playFeedAnimations(feedPlan);
+      }
       this.updateHud();
     }
   }
@@ -392,7 +413,9 @@ export default class GameScene extends Phaser.Scene {
     startNight(this.state);
     addEvent(this.state, 'Night falls over Jugol’s Rest.');
     saveGameState(this.state);
-    this.hud.hideFeedPanel();
+    if (this.hud) {
+      this.hud.hideFeedPanel();
+    }
     this.playPhaseTransition(previousPhase, this.state.phase);
     this.updateHud();
   }
@@ -400,7 +423,9 @@ export default class GameScene extends Phaser.Scene {
   handleClearOvergrowth() {
     if (clearOvergrowth(this.state)) {
       addEvent(this.state, 'Carved back the overgrowth.');
-      this.hud.flashNightStats();
+      if (this.hud) {
+        this.hud.flashNightStats();
+      }
       this.updateHud();
     }
   }
@@ -408,7 +433,9 @@ export default class GameScene extends Phaser.Scene {
   handleGuardRoute() {
     if (guardRoute(this.state)) {
       addEvent(this.state, 'Guarded the route through the ruins.');
-      this.hud.flashNightStats();
+      if (this.hud) {
+        this.hud.flashNightStats();
+      }
       this.updateHud();
     }
   }
@@ -416,7 +443,9 @@ export default class GameScene extends Phaser.Scene {
   handleSuppressThreat() {
     if (suppressThreat(this.state)) {
       addEvent(this.state, 'Suppressed the lurking threat.');
-      this.hud.flashNightStats();
+      if (this.hud) {
+        this.hud.flashNightStats();
+      }
       this.updateHud();
     }
   }
@@ -437,6 +466,65 @@ export default class GameScene extends Phaser.Scene {
     if (this.state.phase !== 'DAY') {
       return;
     }
-    this.hud.toggleFeedPanel(!this.hud.isFeedPanelVisible());
+    if (this.hud) {
+      this.hud.toggleFeedPanel(!this.hud.isFeedPanelVisible());
+    }
+  }
+
+  resetTarget() {
+    if (this.targetPoint) {
+      this.targetPoint = null;
+      this.targetMarker.setVisible(false);
+      this.appendLog('Target cleared.');
+    }
+  }
+
+  centerCamera() {
+    if (this.player) {
+      this.cameras.main.centerOn(this.player.x, this.player.y);
+      this.appendLog('Camera centered on player.');
+    }
+  }
+
+  updateStatus(delta) {
+    if (!this.domUI || !this.player) {
+      return;
+    }
+
+    if (!this.lastPosition) {
+      this.lastPosition = { x: this.player.x, y: this.player.y };
+    }
+
+    const deltaSeconds = delta / 1000;
+    const velocity = deltaSeconds > 0
+      ? {
+        x: (this.player.x - this.lastPosition.x) / deltaSeconds,
+        y: (this.player.y - this.lastPosition.y) / deltaSeconds,
+      }
+      : { x: 0, y: 0 };
+
+    const distance = this.targetPoint
+      ? Phaser.Math.Distance.Between(
+        this.player.x,
+        this.player.y,
+        this.targetPoint.x,
+        this.targetPoint.y
+      )
+      : null;
+
+    this.domUI.updateStatus({
+      position: { x: this.player.x, y: this.player.y },
+      target: this.targetPoint,
+      distance,
+      velocity,
+    });
+
+    this.lastPosition = { x: this.player.x, y: this.player.y };
+  }
+
+  appendLog(message) {
+    if (this.domUI?.appendLog) {
+      this.domUI.appendLog(message);
+    }
   }
 }
