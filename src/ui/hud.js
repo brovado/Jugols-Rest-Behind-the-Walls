@@ -10,8 +10,12 @@ const createButton = (scene, x, y, label, onClick) => {
 
   container.add([background, text]);
   container.setSize(180, 32);
-  container.setInteractive(new Phaser.Geom.Rectangle(0, -16, 180, 32), Phaser.Geom.Rectangle.Contains);
-  container.on('pointerdown', () => {
+  container
+    .setInteractive(new Phaser.Geom.Rectangle(0, -16, 180, 32), Phaser.Geom.Rectangle.Contains)
+    .setScrollFactor(0);
+  container.input.alwaysEnabled = true;
+  container.on('pointerdown', (pointer) => {
+    pointer.event?.stopPropagation?.();
     if (container.input && container.input.enabled) {
       onClick();
     }
