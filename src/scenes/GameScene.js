@@ -89,16 +89,11 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupInput() {
-    this.input.on('gameobjectdown', (pointer) => {
-      pointer.wasOnUI = true;
-    });
-
     this.input.on('pointerdown', (pointer) => {
       if (this.state.victory || this.state.gameOver) {
         return;
       }
-      if (pointer.wasOnUI) {
-        pointer.wasOnUI = false;
+      if (pointer.event?.cancelBubble || pointer.event?.defaultPrevented) {
         return;
       }
       const worldPoint = pointer.positionToCamera(this.cameras.main);
