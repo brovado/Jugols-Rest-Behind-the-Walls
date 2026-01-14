@@ -9,6 +9,9 @@ import {
   clearOvergrowth,
   guardRoute,
   suppressThreat,
+  addEvent,
+  saveGameState,
+  loadGameState,
 } from '../state/gameState.js';
 import { createHud } from '../ui/hud.js';
 import { moveToward } from '../utils/pathing.js';
@@ -27,14 +30,24 @@ export default class GameScene extends Phaser.Scene {
     this.targetMarker = null;
     this.targetPoint = null;
     this.hud = null;
-    this.nightOverlay = null;
+    this.phaseOverlay = null;
+    this.phaseBanner = null;
     this.victoryOverlay = null;
     this.gameOverOverlay = null;
+    this.inputLocked = false;
   }
 
-  create() {
-    this.state = createInitialState();
-    startDay(this.state, { advanceDay: false });
+  create(data = {}) {
+    if (data.loadSave) {
+      this.state = loadGameState();
+    }
+    if (!this.state) {
+      this.state = createInitialState();
+      startDay(this.state, { advanceDay: false });
+      addEvent(this.state, 'Day 1 begins in the Heart District.');
+    } else if (data.loadSave) {
+      addEvent(this.state, 'The watch resumes from the last report.');
+    }
 
     this.setupWorld();
     this.setupPlayer();
@@ -44,6 +57,14 @@ export default class GameScene extends Phaser.Scene {
     this.setupOverlays();
 
     this.updateHud();
+    this.cameras.main.fadeIn(500, 0, 0, 0);
+
+    if (data.showIntro) {
+      this.showChapterIntro();
+    } else {
+      this.inputLocked = false;
+      this.hud.setInteractionLocked(false);
+    }
   }
 
   setupWorld() {
@@ -93,6 +114,9 @@ export default class GameScene extends Phaser.Scene {
       if (this.state.victory || this.state.gameOver) {
         return;
       }
+      if (this.inputLocked) {
+        return;
+      }
       if (pointer.event?.cancelBubble || pointer.event?.defaultPrevented) {
         return;
       }
@@ -119,13 +143,28 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupOverlays() {
-    this.nightOverlay = this.add
-      .rectangle(0, 0, this.scale.width, this.scale.height, 0x020617, 0.5)
+    this.phaseOverlay = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x020617, 0)
       .setOrigin(0, 0)
       .setScrollFactor(0)
-      .setVisible(false);
+      .setDepth(5);
 
-    this.victoryOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false);
+    this.phaseBanner = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 120, '', {
+        fontSize: '48px',
+        color: '#f8fafc',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(60)
+      .setAlpha(0);
+
+    if (this.state.phase === 'NIGHT') {
+      this.phaseOverlay.setAlpha(0.45);
+    }
+
+    this.victoryOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false).setDepth(80);
     const victoryBg = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x0f172a, 0.8).setOrigin(0, 0);
     const victoryText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'Victory!\nJugol’s Rest Stabilized', {
@@ -136,7 +175,7 @@ export default class GameScene extends Phaser.Scene {
       .setOrigin(0.5);
     this.victoryOverlay.add([victoryBg, victoryText]);
 
-    this.gameOverOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false);
+    this.gameOverOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false).setDepth(80);
     const overBg = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x111827, 0.85).setOrigin(0, 0);
     const overText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'Collapse...\nBehind the Walls Falls', {
@@ -205,7 +244,9 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.handleMovement(delta);
+    if (!this.inputLocked) {
+      this.handleMovement(delta);
+    }
     this.updateHud();
   }
 
@@ -257,7 +298,6 @@ export default class GameScene extends Phaser.Scene {
       inThreatZone: this.isInZone('threat'),
     };
     this.hud.update(this.state, context);
-    this.nightOverlay.setVisible(this.state.phase === 'NIGHT');
 
     if (this.state.victory) {
       this.victoryOverlay.setVisible(true);
@@ -283,8 +323,98 @@ export default class GameScene extends Phaser.Scene {
     return zone.contains(this.player.x, this.player.y);
   }
 
+  playPhaseTransition(fromPhase, toPhase) {
+    if (fromPhase === toPhase) {
+      return;
+    }
+    const targetAlpha = toPhase === 'NIGHT' ? 0.45 : 0;
+    this.tweens.add({
+      targets: this.phaseOverlay,
+      alpha: targetAlpha,
+      duration: 500,
+      ease: 'Quad.easeOut',
+    });
+
+    const bannerText = toPhase === 'NIGHT' ? 'NIGHTFALL' : 'DAWN';
+    this.phaseBanner.setText(bannerText);
+    this.phaseBanner.setAlpha(0);
+    this.tweens.add({
+      targets: this.phaseBanner,
+      alpha: 1,
+      duration: 250,
+      ease: 'Sine.easeOut',
+      yoyo: true,
+      hold: 600,
+    });
+  }
+
+  showChapterIntro() {
+    this.inputLocked = true;
+    this.hud.setInteractionLocked(true);
+
+    const { width, height } = this.scale;
+    const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(70);
+    const bg = this.add.rectangle(0, 0, width, height, 0x020617, 0.75).setOrigin(0, 0);
+    const card = this.add
+      .rectangle(width / 2, height / 2, 520, 280, 0x0b1120, 0.96)
+      .setStrokeStyle(2, 0x38bdf8, 1);
+    const chapterTitle = this.add.text(width / 2, height / 2 - 70, 'Heart District', {
+      fontSize: '28px',
+      color: '#f8fafc',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    const flavorText = this.add.text(width / 2, height / 2 - 20, 'Old hearths still glow behind the walls.\nSupplies are scarce, but the pack is ready.', {
+      fontSize: '16px',
+      color: '#cbd5f5',
+      align: 'center',
+      lineSpacing: 6,
+    }).setOrigin(0.5);
+    const promptText = this.add.text(width / 2, height / 2 + 80, 'Press Space or Click to Begin', {
+      fontSize: '16px',
+      color: '#facc15',
+    }).setOrigin(0.5);
+
+    overlay.add([bg, card, chapterTitle, flavorText, promptText]);
+    overlay.setAlpha(0);
+    this.tweens.add({
+      targets: overlay,
+      alpha: 1,
+      duration: 300,
+      ease: 'Sine.easeOut',
+    });
+
+    const proceed = () => {
+      if (!overlay.active) {
+        return;
+      }
+      this.tweens.add({
+        targets: overlay,
+        alpha: 0,
+        duration: 300,
+        ease: 'Sine.easeIn',
+        onComplete: () => {
+          overlay.destroy();
+          this.inputLocked = false;
+          this.hud.setInteractionLocked(false);
+        },
+      });
+    };
+
+    this.input.keyboard.once('keydown-SPACE', proceed);
+    this.input.once('pointerdown', (pointer) => {
+      pointer.event?.stopPropagation?.();
+      proceed();
+    });
+  }
+
   handleCollect(locationKey) {
     if (collectLocation(this.state, locationKey)) {
+      const labels = {
+        butcher: 'Collected stores from the Butcher.',
+        tavern: 'Collected kegs from the Tavern.',
+        market: 'Collected supplies from the Market.',
+      };
+      addEvent(this.state, labels[locationKey] || 'Collected supplies.');
       this.hud.hideFeedPanel();
       this.updateHud();
     }
@@ -292,6 +422,7 @@ export default class GameScene extends Phaser.Scene {
 
   handleFeed(scraps, fatty) {
     if (feedPack(this.state, scraps, fatty)) {
+      addEvent(this.state, `Fed the pack (${scraps} scraps, ${fatty} fatty).`);
       this.hud.hideFeedPanel();
       this.updateHud();
     }
@@ -299,6 +430,7 @@ export default class GameScene extends Phaser.Scene {
 
   handleStabilizeCamp() {
     if (stabilizeCamp(this.state)) {
+      addEvent(this.state, 'Stabilized the camp with fresh supplies.');
       this.updateHud();
     }
   }
@@ -307,25 +439,32 @@ export default class GameScene extends Phaser.Scene {
     if (this.state.phase !== 'DAY') {
       return;
     }
+    const previousPhase = this.state.phase;
     startNight(this.state);
+    addEvent(this.state, 'Night falls over Jugol’s Rest.');
+    saveGameState(this.state);
     this.hud.hideFeedPanel();
+    this.playPhaseTransition(previousPhase, this.state.phase);
     this.updateHud();
   }
 
   handleClearOvergrowth() {
     if (clearOvergrowth(this.state)) {
+      addEvent(this.state, 'Carved back the overgrowth.');
       this.updateHud();
     }
   }
 
   handleGuardRoute() {
     if (guardRoute(this.state)) {
+      addEvent(this.state, 'Guarded the route through the ruins.');
       this.updateHud();
     }
   }
 
   handleSuppressThreat() {
     if (suppressThreat(this.state)) {
+      addEvent(this.state, 'Suppressed the lurking threat.');
       this.updateHud();
     }
   }
@@ -334,7 +473,11 @@ export default class GameScene extends Phaser.Scene {
     if (this.state.phase !== 'NIGHT') {
       return;
     }
+    const previousPhase = this.state.phase;
     endNight(this.state);
+    addEvent(this.state, 'Dawn breaks, the watch rotates.');
+    saveGameState(this.state);
+    this.playPhaseTransition(previousPhase, this.state.phase);
     this.updateHud();
   }
 

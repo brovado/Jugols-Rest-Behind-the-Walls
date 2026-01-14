@@ -2,6 +2,7 @@ const DAY_ACTIONS = 5;
 const HOUSING_CAPACITY = 4;
 const IMMIGRATION_BURST = 6;
 const MAX_METER = 100;
+const SAVE_KEY = 'jugols-rest-save';
 
 const clampMeter = (value) => Math.max(0, Math.min(MAX_METER, value));
 
@@ -32,7 +33,58 @@ export const createInitialState = () => ({
   },
   victory: false,
   gameOver: false,
+  eventLog: [],
 });
+
+export const addEvent = (state, message) => {
+  if (!state.eventLog) {
+    state.eventLog = [];
+  }
+  state.eventLog.push(message);
+  if (state.eventLog.length > 25) {
+    state.eventLog.shift();
+  }
+};
+
+export const saveGameState = (state) => {
+  try {
+    const payload = JSON.stringify(state);
+    window.localStorage.setItem(SAVE_KEY, payload);
+  } catch (error) {
+    console.warn('Failed to save game state', error);
+  }
+};
+
+export const loadGameState = () => {
+  try {
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const base = createInitialState();
+    const data = JSON.parse(raw);
+    return {
+      ...base,
+      ...data,
+      locationCollected: {
+        ...base.locationCollected,
+        ...data.locationCollected,
+      },
+      eventLog: Array.isArray(data.eventLog) ? data.eventLog : [],
+    };
+  } catch (error) {
+    console.warn('Failed to load game state', error);
+    return null;
+  }
+};
+
+export const hasSavedGame = () => {
+  try {
+    return Boolean(window.localStorage.getItem(SAVE_KEY));
+  } catch (error) {
+    return false;
+  }
+};
 
 export const startDay = (state, { advanceDay }) => {
   if (advanceDay) {
