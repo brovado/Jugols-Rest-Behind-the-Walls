@@ -5,6 +5,12 @@ import {
 } from '../state/gameState.js';
 import { getActiveFactions } from '../state/factionSystem.js';
 import { getDistrictConfig } from '../world/districts.js';
+import {
+  formatBlessingDuration,
+  formatBlessingEffect,
+  getBlessingActionCostModifier,
+} from '../world/blessings.js';
+import { GODS, GOD_BY_ID } from '../world/gods.js';
 import { getDomUI } from './domUI.js';
 import {
   isPanelOpen,
@@ -162,12 +168,38 @@ export const initDomHud = (state, callbacks) => {
   const poiList = createElement('div', 'poi-list');
   poiPanel.append(poiHeader, poiContext, poiList);
 
+  const shrinePanel = createElement('div', 'shrine-panel');
+  const shrineHeader = createElement('div', 'shrine-panel-header');
+  const shrineTitle = createElement('div', null, 'Shrines');
+  const shrineToggle = createElement('button', 'shrine-toggle', 'Show');
+  shrineToggle.type = 'button';
+  shrineHeader.append(shrineTitle, shrineToggle);
+
+  const shrineCount = createElement('div', 'shrine-count', 'Shrines: 0/0');
+  const shrinePrompt = createElement('div', 'shrine-prompt', '');
+  const shrineList = createElement('div', 'shrine-list');
+
+  const blessingHeader = createElement('div', 'shrine-panel-header', 'Active Blessings');
+  const blessingList = createElement('div', 'blessing-list');
+
+  shrinePanel.append(
+    shrineHeader,
+    shrineCount,
+    shrinePrompt,
+    shrineList,
+    blessingHeader,
+    blessingList
+  );
+
   const getDistrictCollected = (stateSnapshot) =>
     stateSnapshot.dayCollectedByDistrict?.[stateSnapshot.currentDistrictId] || {
       butcher: false,
       tavern: false,
       market: false,
     };
+
+  const getNightActionCost = (stateSnapshot, baseCost) =>
+    Math.max(1, baseCost + getBlessingActionCostModifier(stateSnapshot));
 
   const actionsConfig = [
     {
@@ -251,7 +283,7 @@ export const initDomHud = (state, callbacks) => {
         context.nearestPoi?.type === 'OVERGROWTH',
       enabledWhen: (stateSnapshot, context) => {
         const severity = context.nearestPoi?.severity || 1;
-        const cost = 2 + severity;
+        const cost = getNightActionCost(stateSnapshot, 2 + severity);
         return (
           !interactionLocked &&
           context.nearestPoiInRange &&
@@ -262,7 +294,7 @@ export const initDomHud = (state, callbacks) => {
         Boolean(context.nearestPoiInRange) || stateSnapshot.overgrowth >= 60,
       getDisableReason: (stateSnapshot, context) => {
         const severity = context.nearestPoi?.severity || 1;
-        const cost = 2 + severity;
+        const cost = getNightActionCost(stateSnapshot, 2 + severity);
         if (!context.nearestPoiInRange) {
           return 'Move closer to the overgrowth.';
         }
@@ -282,15 +314,16 @@ export const initDomHud = (state, callbacks) => {
       enabledWhen: (stateSnapshot, context) =>
         !interactionLocked &&
         context.nearestPoiInRange &&
-        stateSnapshot.packStamina >= 2,
+        stateSnapshot.packStamina >= getNightActionCost(stateSnapshot, 2),
       highlightWhen: (stateSnapshot, context) =>
         Boolean(context.nearestPoiInRange) || stateSnapshot.threatActive,
       getDisableReason: (stateSnapshot, context) => {
         if (!context.nearestPoiInRange) {
           return 'Move closer to the patrol route.';
         }
-        if (stateSnapshot.packStamina < 2) {
-          return 'Need 2 stamina.';
+        const cost = getNightActionCost(stateSnapshot, 2);
+        if (stateSnapshot.packStamina < cost) {
+          return `Need ${cost} stamina.`;
         }
         return '';
       },
@@ -305,7 +338,7 @@ export const initDomHud = (state, callbacks) => {
       enabledWhen: (stateSnapshot, context) =>
         !interactionLocked &&
         context.nearestPoiInRange &&
-        stateSnapshot.packStamina >= 3 &&
+        stateSnapshot.packStamina >= getNightActionCost(stateSnapshot, 3) &&
         stateSnapshot.packPower >= 2,
       highlightWhen: (stateSnapshot, context) =>
         Boolean(context.nearestPoiInRange) || stateSnapshot.threatActive,
@@ -313,8 +346,9 @@ export const initDomHud = (state, callbacks) => {
         if (!context.nearestPoiInRange) {
           return 'Move closer to the ruckus.';
         }
-        if (stateSnapshot.packStamina < 3) {
-          return 'Need 3 stamina.';
+        const cost = getNightActionCost(stateSnapshot, 3);
+        if (stateSnapshot.packStamina < cost) {
+          return `Need ${cost} stamina.`;
         }
         if (stateSnapshot.packPower < 2) {
           return 'Need 2 power.';
@@ -332,14 +366,35 @@ export const initDomHud = (state, callbacks) => {
       enabledWhen: (stateSnapshot, context) =>
         !interactionLocked &&
         context.nearestPoiInRange &&
-        stateSnapshot.packStamina >= 2,
+        stateSnapshot.packStamina >= getNightActionCost(stateSnapshot, 2),
       highlightWhen: (stateSnapshot, context) => Boolean(context.nearestPoiInRange),
       getDisableReason: (stateSnapshot, context) => {
         if (!context.nearestPoiInRange) {
           return 'Move closer to the lot.';
         }
-        if (stateSnapshot.packStamina < 2) {
-          return 'Need 2 stamina.';
+        const cost = getNightActionCost(stateSnapshot, 2);
+        if (stateSnapshot.packStamina < cost) {
+          return `Need ${cost} stamina.`;
+        }
+        return '';
+      },
+    },
+    {
+      id: 'pray_shrine',
+      label: 'Pray',
+      onClick: callbacks.onPrayAtShrine,
+      visibleWhen: (stateSnapshot, context) => Boolean(context.nearestShrine),
+      enabledWhen: (stateSnapshot, context) =>
+        !interactionLocked &&
+        context.nearestShrineInRange &&
+        !context.nearestShrine?.prayedToday,
+      highlightWhen: (stateSnapshot, context) => Boolean(context.nearestShrineInRange),
+      getDisableReason: (stateSnapshot, context) => {
+        if (!context.nearestShrineInRange) {
+          return 'Move closer to the shrine.';
+        }
+        if (context.nearestShrine?.prayedToday) {
+          return 'Already prayed today.';
         }
         return '';
       },
@@ -368,7 +423,7 @@ export const initDomHud = (state, callbacks) => {
     actionVisibility.set(action.id, false);
   });
 
-  actionsPanel.append(hudStatus, poiPanel, actionGroup);
+  actionsPanel.append(hudStatus, poiPanel, shrinePanel, actionGroup);
 
   const packSummary = createElement('div', null, 'Tonight’s contributions:');
   const packCardsContainer = createElement('div', 'hud-action-group');
@@ -576,6 +631,12 @@ export const initDomHud = (state, callbacks) => {
   let lastFeedVisible = false;
   let lastPopulationSnapshot = null;
   let lastPopulationChangeAt = 0;
+  let shrineListVisible = false;
+
+  shrineToggle.addEventListener('click', () => {
+    shrineListVisible = !shrineListVisible;
+    shrineToggle.textContent = shrineListVisible ? 'Hide' : 'Show';
+  });
 
   const updateFeedPanel = (stateSnapshot) => {
     const maxScraps = stateSnapshot.foodScraps;
@@ -717,6 +778,78 @@ export const initDomHud = (state, callbacks) => {
       );
       row.append(icon, label, distance);
       poiList.appendChild(row);
+    });
+  };
+
+  const updateShrinePanel = (stateSnapshot, context) => {
+    const discovered = stateSnapshot.discoveredShrines || {};
+    const discoveredCount = Object.keys(discovered).length;
+    shrineCount.textContent = `Shrines: ${discoveredCount}/${GODS.length}`;
+
+    shrinePrompt.textContent = '';
+    if (context.nearestShrine && context.shrineGod) {
+      if (context.nearestShrineInRange) {
+        shrinePrompt.textContent = context.nearestShrine.prayedToday
+          ? `Shrine of ${context.shrineGod.name} — Already prayed today`
+          : `Shrine of ${context.shrineGod.name} — Press [Pray]`;
+      } else if (typeof context.nearestShrineDistance === 'number') {
+        shrinePrompt.textContent = `Shrine of ${context.shrineGod.name} — ${Math.round(
+          context.nearestShrineDistance
+        )}m away`;
+      }
+    }
+    setVisible(shrinePrompt, Boolean(shrinePrompt.textContent));
+
+    setVisible(shrineList, shrineListVisible);
+    if (shrineListVisible) {
+      shrineList.innerHTML = '';
+      const discoveredGods = GODS.filter((god) => discovered[god.id]);
+      if (discoveredGods.length === 0) {
+        shrineList.append(
+          createElement('div', 'shrine-list-empty', 'No shrines discovered yet.')
+        );
+      } else {
+        discoveredGods.forEach((god) => {
+          const row = createElement('div', 'shrine-list-row');
+          const name = createElement('div', 'shrine-list-name', god.name);
+          const domains = createElement(
+            'div',
+            'shrine-list-domains',
+            god.domains.join(', ')
+          );
+          row.append(name, domains);
+          shrineList.append(row);
+        });
+      }
+    }
+
+    blessingList.innerHTML = '';
+    const activeBlessings = Array.isArray(stateSnapshot.activeBlessings)
+      ? stateSnapshot.activeBlessings
+      : [];
+    if (activeBlessings.length === 0) {
+      blessingList.append(
+        createElement('div', 'blessing-empty', 'No active blessings.')
+      );
+      return;
+    }
+    activeBlessings.forEach((blessing) => {
+      const row = createElement('div', 'blessing-row');
+      const god = blessing?.godId ? GOD_BY_ID[blessing.godId] : null;
+      const name = createElement('div', 'blessing-name', god?.name || 'Blessing');
+      const effect = createElement(
+        'div',
+        'blessing-effect',
+        formatBlessingEffect(blessing)
+      );
+      const duration = formatBlessingDuration(blessing);
+      if (duration) {
+        const durationEl = createElement('div', 'blessing-duration', duration);
+        row.append(name, effect, durationEl);
+      } else {
+        row.append(name, effect);
+      }
+      blessingList.append(row);
     });
   };
 
@@ -964,6 +1097,7 @@ export const initDomHud = (state, callbacks) => {
     update: (stateSnapshot, context) => {
       updateTopStatus(stateSnapshot);
       updatePoiPanel(stateSnapshot, context);
+      updateShrinePanel(stateSnapshot, context);
       updateButtons(stateSnapshot, context);
       updateMeters(stateSnapshot);
       updatePopulationPanel(stateSnapshot);

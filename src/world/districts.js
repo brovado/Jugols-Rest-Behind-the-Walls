@@ -35,6 +35,12 @@ export const DISTRICTS = {
       tavern: { x: 880, y: 320 },
       market: { x: 620, y: 720 },
     },
+    shrineAnchors: [
+      { x: 540, y: 420 },
+      { x: 760, y: 460 },
+      { x: 980, y: 520 },
+      { x: 620, y: 900 },
+    ],
     campAnchors: [
       { x: 480, y: 980 },
       { x: 560, y: 1020 },
@@ -98,6 +104,12 @@ export const DISTRICTS = {
       tavern: { x: 900, y: 260 },
       market: { x: 720, y: 680 },
     },
+    shrineAnchors: [
+      { x: 520, y: 380 },
+      { x: 760, y: 540 },
+      { x: 980, y: 600 },
+      { x: 640, y: 920 },
+    ],
     campAnchors: [
       { x: 360, y: 960 },
       { x: 520, y: 1060 },
@@ -164,6 +176,12 @@ export const DISTRICTS = {
       tavern: { x: 860, y: 360 },
       market: { x: 640, y: 760 },
     },
+    shrineAnchors: [
+      { x: 480, y: 420 },
+      { x: 720, y: 520 },
+      { x: 940, y: 580 },
+      { x: 560, y: 900 },
+    ],
     campAnchors: [
       { x: 520, y: 980 },
       { x: 620, y: 1040 },
