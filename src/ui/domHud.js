@@ -1,4 +1,8 @@
-import { getHyenaContribution } from '../state/gameState.js';
+import {
+  getDominantCampFaction,
+  getHyenaContribution,
+  getIncomingTotal,
+} from '../state/gameState.js';
 import { getActiveFactions } from '../state/factionSystem.js';
 import { getDistrictConfig } from '../world/districts.js';
 import { getDomUI } from './domUI.js';
@@ -551,7 +555,14 @@ export const initDomHud = (state, callbacks) => {
   const housedBar = createPopulationBar('Housed', '#4ade80');
   const campedBar = createPopulationBar('Camped', '#f97316');
 
-  populationPanel.append(populationGrid, housedBar.container, campedBar.container);
+  const campDominanceNote = createElement('div', 'population-note', '');
+
+  populationPanel.append(
+    populationGrid,
+    housedBar.container,
+    campedBar.container,
+    campDominanceNote
+  );
 
   let interactionLocked = false;
   let lastEventCount = 0;
@@ -793,7 +804,7 @@ export const initDomHud = (state, callbacks) => {
     const total = housed + camped;
     const capacity = Math.max(0, stateSnapshot.housingCapacity || 0);
     const available = Math.max(0, capacity - housed);
-    const incoming = Math.max(0, stateSnapshot.incomingNextDay || 0);
+    const incoming = getIncomingTotal(stateSnapshot.incomingGroupsNextDay);
 
     populationRows.total.valueEl.textContent = `${total}`;
     populationRows.housed.valueEl.textContent = `${housed}`;
@@ -804,6 +815,18 @@ export const initDomHud = (state, callbacks) => {
     housedBar.update(housed, total);
     campedBar.update(camped, total);
 
+    const dominantFaction = getDominantCampFaction(stateSnapshot);
+    if (camped > 0 && dominantFaction) {
+      campDominanceNote.textContent = `Camps dominated by: ${dominantFaction.displayName}`;
+      setVisible(campDominanceNote, true);
+    } else if (camped > 0) {
+      campDominanceNote.textContent = 'Camps are mixed.';
+      setVisible(campDominanceNote, true);
+    } else {
+      campDominanceNote.textContent = '';
+      setVisible(campDominanceNote, false);
+    }
+
     const snapshot = {
       housed,
       camped,
@@ -811,6 +834,7 @@ export const initDomHud = (state, callbacks) => {
       capacity,
       available,
       incoming,
+      dominantFactionId: dominantFaction?.id || null,
     };
 
     if (lastPopulationSnapshot) {
