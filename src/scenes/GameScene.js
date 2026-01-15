@@ -190,11 +190,44 @@ export default class GameScene extends Phaser.Scene {
     this.map = map;
     this.mapLayers = { ground: groundLayer, walls: wallsLayer, overlays: overlayLayer };
     this.worldBounds = { width: map.widthInPixels, height: map.heightInPixels };
-    this.mapSpawn = { x: map.tileWidth * 4, y: map.tileHeight * 4 };
+    const spawn = this.getPlayerSpawnFromMap(map);
+    if (!spawn) {
+      console.warn('Player spawn point not found in camp tilemap.');
+    }
+    this.mapSpawn = spawn;
+  }
+
+  getPlayerSpawnFromMap(map) {
+    const spawnLayer = map.getObjectLayer('spawn');
+    if (!spawnLayer?.objects?.length) {
+      return null;
+    }
+
+    const playerSpawn = spawnLayer.objects.find((obj) => {
+      const isSpawnClass = obj.class === 'spawn' || obj.type === 'spawn';
+      if (!isSpawnClass) {
+        return false;
+      }
+      if (Array.isArray(obj.properties)) {
+        const roleProp = obj.properties.find((prop) => prop.name === 'role');
+        return roleProp?.value === 'player';
+      }
+      return obj.properties?.role === 'player';
+    });
+
+    if (!playerSpawn) {
+      return null;
+    }
+
+    return { x: playerSpawn.x, y: playerSpawn.y };
   }
 
   setupPlayer() {
-    const spawn = this.mapSpawn || this.currentDistrict?.spawn || { x: 400, y: 500 };
+    const spawn = this.mapSpawn ||
+      this.currentDistrict?.spawn || {
+        x: this.worldBounds.width / 2,
+        y: this.worldBounds.height / 2,
+      };
     if (this.textures.exists('player')) {
       this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player');
       this.player.setScale(0.5);
@@ -204,6 +237,7 @@ export default class GameScene extends Phaser.Scene {
         .setDisplaySize(32, 32);
       this.player.setTint(0xfbbf24);
     }
+    this.player.setOrigin(0, 1);
     this.player.setCollideWorldBounds(true);
     this.player.setDepth(10);
     if (this.mapLayers.walls) {
