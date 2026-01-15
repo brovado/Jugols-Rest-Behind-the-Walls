@@ -166,6 +166,21 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    const mapData = this.cache.tilemap.get(mapKey)?.data;
+    if (!mapData || !Array.isArray(mapData.tilesets)) {
+      return;
+    }
+    mapData.tilesets.forEach((tileset, idx) => {
+      const imageLabel = tileset?.image ? tileset.image : '(no image field)';
+      console.log(
+        `Tilemap tileset ${idx}: ${imageLabel} (name: ${tileset?.name ?? 'unknown'}, firstgid: ${tileset?.firstgid ?? 'unknown'})`,
+      );
+    });
+    if (mapData.tilesets.some((tileset) => tileset?.source)) {
+      console.log('External tilesets unsupported. Embed tileset in Tiled and re-export JSON.');
+      return;
+    }
+
     const map = this.make.tilemap({ key: mapKey });
     const tileset = map.addTilesetImage('tile6', 'roguelikeSheet');
     if (!tileset) {
