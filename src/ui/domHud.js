@@ -4,6 +4,7 @@ import {
   isPanelOpen,
   setPanelActive,
   setPanelDirty,
+  setPanelOpen,
   setPanelStateText,
 } from './panelDock.js';
 
@@ -110,16 +111,18 @@ export const initDomHud = (state, callbacks) => {
 
   const actionsPanel = document.getElementById('actions-panel');
   const packPanel = document.getElementById('pack-panel');
+  const feedPanel = document.getElementById('feed-panel');
   const metersPanel = document.getElementById('meters-panel');
   const populationPanel = document.getElementById('population-panel');
   const consoleLog = document.getElementById('console-log');
 
-  if (!actionsPanel || !packPanel || !metersPanel || !populationPanel || !consoleLog) {
+  if (!actionsPanel || !packPanel || !feedPanel || !metersPanel || !populationPanel || !consoleLog) {
     return null;
   }
 
   actionsPanel.innerHTML = '';
   packPanel.innerHTML = '';
+  feedPanel.innerHTML = '';
   metersPanel.innerHTML = '';
   populationPanel.innerHTML = '';
 
@@ -280,7 +283,7 @@ export const initDomHud = (state, callbacks) => {
   const packCardsContainer = createElement('div', 'hud-action-group');
 
   const panelState = { allocations: {} };
-  const feedPanel = createElement('div', 'feed-panel hidden');
+  const feedPanelBody = createElement('div', 'feed-panel');
   const feedHeader = createElement('div', 'feed-header');
   const scrapsText = createElement('div', null, 'Scraps: 0');
   const fattyText = createElement('div', null, 'Fatty: 0');
@@ -307,13 +310,15 @@ export const initDomHud = (state, callbacks) => {
       alloc.scraps = 0;
       alloc.fatty = 0;
     });
-    feedPanel.classList.add('hidden');
+    setPanelOpen('feed', false);
+    lastFeedVisible = false;
   });
 
   feedActions.append(confirmButton.el, cancelButton.el);
-  feedPanel.append(feedHeader, feedRowsContainer, feedActions);
+  feedPanelBody.append(feedHeader, feedRowsContainer, feedActions);
 
-  packPanel.append(packSummary, packCardsContainer, feedPanel);
+  packPanel.append(packSummary, packCardsContainer);
+  feedPanel.append(feedPanelBody);
   const packCards = new Map();
   const feedRows = [];
 
@@ -463,7 +468,8 @@ export const initDomHud = (state, callbacks) => {
   let lastPackSnapshot = null;
   let lastPackChangeAt = 0;
   let lastPackFood = null;
-  let lastPackVisible = false;
+  let lastFeedChangeAt = 0;
+  let lastFeedVisible = false;
   let lastPopulationSnapshot = null;
   let lastPopulationChangeAt = 0;
 
@@ -672,6 +678,10 @@ export const initDomHud = (state, callbacks) => {
         if (!isPanelOpen('pack')) {
           setPanelDirty('pack', true);
         }
+        lastFeedChangeAt = window.performance.now();
+        if (!isPanelOpen('feed')) {
+          setPanelDirty('feed', true);
+        }
       }
     }
     lastPackSnapshot = packSnapshot;
@@ -688,6 +698,10 @@ export const initDomHud = (state, callbacks) => {
         lastPackChangeAt = window.performance.now();
         if (!isPanelOpen('pack')) {
           setPanelDirty('pack', true);
+        }
+        lastFeedChangeAt = window.performance.now();
+        if (!isPanelOpen('feed')) {
+          setPanelDirty('feed', true);
         }
       }
     }
@@ -741,6 +755,12 @@ export const initDomHud = (state, callbacks) => {
           ? `Scraps ${stateSnapshot.foodScraps}`
           : `Stamina ${stateSnapshot.packStamina}`
       );
+      setPanelStateText(
+        'feed',
+        stateSnapshot.phase === 'DAY'
+          ? `Scraps ${stateSnapshot.foodScraps}`
+          : 'Rest'
+      );
       setPanelStateText('meters', stateSnapshot.threatActive ? 'Alert' : 'Stable');
       setPanelStateText(
         'population',
@@ -756,7 +776,10 @@ export const initDomHud = (state, callbacks) => {
         stateSnapshot.threatActive;
       const packActive =
         now - lastPackChangeAt < 2000 ||
-        lastPackVisible ||
+        stateSnapshot.pack.some((hyena) => hyena.hunger >= 70);
+      const feedActive =
+        now - lastFeedChangeAt < 2000 ||
+        lastFeedVisible ||
         stateSnapshot.pack.some((hyena) => hyena.hunger >= 70);
       setPanelActive('meters', metersActive);
       setPanelActive(
@@ -764,16 +787,17 @@ export const initDomHud = (state, callbacks) => {
         now - lastPopulationChangeAt < 2000 || stateSnapshot.campPop > 0
       );
       setPanelActive('pack', packActive);
+      setPanelActive('feed', feedActive);
     },
     toggleFeedPanel: (show) => {
-      feedPanel.classList.toggle('hidden', !show);
-      lastPackVisible = show;
+      setPanelOpen('feed', show);
+      lastFeedVisible = show;
     },
     hideFeedPanel: () => {
-      feedPanel.classList.add('hidden');
-      lastPackVisible = false;
+      setPanelOpen('feed', false);
+      lastFeedVisible = false;
     },
-    isFeedPanelVisible: () => !feedPanel.classList.contains('hidden'),
+    isFeedPanelVisible: () => isPanelOpen('feed'),
     setInteractionLocked: (locked) => {
       interactionLocked = locked;
     },
