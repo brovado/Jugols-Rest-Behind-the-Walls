@@ -367,7 +367,7 @@ export default class GameScene extends Phaser.Scene {
     const draftBg = this.add
       .rectangle(0, 0, this.scale.width, this.scale.height, 0x0f172a, 0.85)
       .setOrigin(0, 0);
-    this.draftContent = this.add.container(0, 0);
+    this.draftContent = this.add.container(0, 0).setScrollFactor(0);
     this.draftOverlay.add([draftBg, this.draftContent]);
   }
 
@@ -1417,11 +1417,11 @@ export default class GameScene extends Phaser.Scene {
       fontSize: '32px',
       color: '#f8fafc',
       fontStyle: 'bold',
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setScrollFactor(0);
     const subtitle = this.add.text(width / 2, 160, 'Choose a new hyena for the roster.', {
       fontSize: '16px',
       color: '#cbd5f5',
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setScrollFactor(0);
     this.draftContent.add([title, subtitle]);
 
     const choices = Array.isArray(this.state.draftChoices) ? this.state.draftChoices : [];
@@ -1436,21 +1436,22 @@ export default class GameScene extends Phaser.Scene {
       const y = 220;
       const card = this.add.rectangle(x, y, cardWidth, cardHeight, 0x111827, 0.95);
       card.setOrigin(0, 0);
+      card.setScrollFactor(0);
       card.setStrokeStyle(2, 0x38bdf8, 0.7);
 
       const name = this.add.text(x + 16, y + 16, choice.name, {
         fontSize: '18px',
         color: '#f8fafc',
         fontStyle: 'bold',
-      });
+      }).setScrollFactor(0);
       const role = this.add.text(x + 16, y + 46, choice.role, {
         fontSize: '14px',
         color: '#38bdf8',
-      });
+      }).setScrollFactor(0);
       const temperament = this.add.text(x + 16, y + 70, `Temperament: ${choice.temperament}`, {
         fontSize: '12px',
         color: '#cbd5f5',
-      });
+      }).setScrollFactor(0);
       const traitText = Array.isArray(choice.traits) && choice.traits.length > 0
         ? `Traits: ${choice.traits.join(', ')}`
         : 'Traits: None';
@@ -1458,31 +1459,33 @@ export default class GameScene extends Phaser.Scene {
         fontSize: '12px',
         color: '#94a3b8',
         wordWrap: { width: cardWidth - 32 },
-      });
+      }).setScrollFactor(0);
 
       const addToPackAvailable = this.state.activePackIds.length < this.state.packSizeCap;
       const recruitButton = this.add.rectangle(x + 16, y + 150, cardWidth - 32, 28, 0x38bdf8, 0.9);
       recruitButton.setOrigin(0, 0);
+      recruitButton.setScrollFactor(0);
       recruitButton.setInteractive({ useHandCursor: true });
       recruitButton.on('pointerdown', () => this.recruitDraftHyena(choice, false));
       const recruitText = this.add.text(x + cardWidth / 2, y + 164, 'Recruit', {
         fontSize: '13px',
         color: '#0f172a',
         fontStyle: 'bold',
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setScrollFactor(0);
 
       this.draftContent.add([card, name, role, temperament, traits, recruitButton, recruitText]);
 
       if (addToPackAvailable) {
         const packButton = this.add.rectangle(x + 16, y + 184, cardWidth - 32, 28, 0xfbbf24, 0.9);
         packButton.setOrigin(0, 0);
+        packButton.setScrollFactor(0);
         packButton.setInteractive({ useHandCursor: true });
         packButton.on('pointerdown', () => this.recruitDraftHyena(choice, true));
         const packText = this.add.text(x + cardWidth / 2, y + 198, 'Recruit + Add to Pack', {
           fontSize: '12px',
           color: '#0f172a',
           fontStyle: 'bold',
-        }).setOrigin(0.5);
+        }).setOrigin(0.5).setScrollFactor(0);
         this.draftContent.add([packButton, packText]);
       }
     });
