@@ -156,11 +156,17 @@ export default class GameScene extends Phaser.Scene {
     this.mapLayers = {};
     this.mapSpawn = null;
     this.worldBounds = { width: WORLD_WIDTH, height: WORLD_HEIGHT };
-    if (!this.cache.tilemap.exists('heart_district')) {
+    const mapKey =
+      this.currentDistrict?.id === 'camp'
+        ? 'camp'
+        : this.currentDistrict?.id === 'heart'
+          ? 'heart_district'
+          : null;
+    if (!mapKey || !this.cache.tilemap.exists(mapKey)) {
       return;
     }
 
-    const map = this.make.tilemap({ key: 'heart_district' });
+    const map = this.make.tilemap({ key: mapKey });
     const tileset = map.addTilesetImage('tile6', 'roguelikeSheet');
     if (!tileset) {
       return;
