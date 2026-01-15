@@ -1,4 +1,4 @@
-import { getDistrictConfig } from '../world/districts.js';
+import { DISTRICTS, getDistrictConfig } from '../world/districts.js';
 
 const DAY_ACTIONS = 5;
 const BASE_INCOMING = 3;
@@ -70,6 +70,46 @@ const POI_TYPES = ['OVERGROWTH', 'RUCKUS', 'ROUTE', 'LOT'];
 
 const getNightPoiPoints = (districtConfig) =>
   districtConfig?.spawnAnchors || getDistrictConfig('heart').spawnAnchors;
+
+const createDistrictCollections = () =>
+  Object.keys(DISTRICTS).reduce((acc, id) => {
+    acc[id] = {
+      butcher: false,
+      tavern: false,
+      market: false,
+    };
+    return acc;
+  }, {});
+
+const createDistrictPois = () =>
+  Object.keys(DISTRICTS).reduce((acc, id) => {
+    acc[id] = [];
+    return acc;
+  }, {});
+
+const ensureDistrictCollections = (state, districtId) => {
+  if (!state.dayCollectedByDistrict) {
+    state.dayCollectedByDistrict = createDistrictCollections();
+  }
+  if (!state.dayCollectedByDistrict[districtId]) {
+    state.dayCollectedByDistrict[districtId] = {
+      butcher: false,
+      tavern: false,
+      market: false,
+    };
+  }
+  return state.dayCollectedByDistrict[districtId];
+};
+
+const ensureDistrictPois = (state, districtId) => {
+  if (!state.activePoisByDistrict) {
+    state.activePoisByDistrict = createDistrictPois();
+  }
+  if (!Array.isArray(state.activePoisByDistrict[districtId])) {
+    state.activePoisByDistrict[districtId] = [];
+  }
+  return state.activePoisByDistrict[districtId];
+};
 
 const createPoi = (state, type, point, index, severity) => ({
   id: `poi-${state.dayNumber}-${state.phase}-${type}-${index}`,
@@ -197,12 +237,8 @@ export const createInitialState = () => ({
   housingBoostedTonight: false,
   clearedOvergrowthTonight: false,
   clearedOvergrowthLastNight: false,
-  activePois: [],
-  locationCollected: {
-    butcher: false,
-    tavern: false,
-    market: false,
-  },
+  activePoisByDistrict: createDistrictPois(),
+  dayCollectedByDistrict: createDistrictCollections(),
   currentDistrictId: 'heart',
   victory: false,
   gameOver: false,
@@ -242,15 +278,40 @@ export const loadGameState = () => {
       ...data,
       currentDistrictId: resolvedDistrictId,
       pack: normalizePack(data.pack),
-      locationCollected: {
-        ...base.locationCollected,
-        ...data.locationCollected,
+      dayCollectedByDistrict: {
+        ...base.dayCollectedByDistrict,
+        ...(data.dayCollectedByDistrict || {}),
       },
-      activePois: Array.isArray(data.activePois)
-        ? data.activePois.filter((poi) => POI_TYPES.includes(poi.type))
-        : [],
+      activePoisByDistrict: {
+        ...base.activePoisByDistrict,
+        ...(data.activePoisByDistrict || {}),
+      },
       eventLog: Array.isArray(data.eventLog) ? data.eventLog : [],
     };
+    const legacyCollected = data.locationCollected;
+    if (!data.dayCollectedByDistrict && legacyCollected) {
+      merged.dayCollectedByDistrict[resolvedDistrictId] = {
+        ...merged.dayCollectedByDistrict[resolvedDistrictId],
+        ...legacyCollected,
+      };
+    }
+    Object.keys(DISTRICTS).forEach((districtId) => {
+      const collected = merged.dayCollectedByDistrict[districtId];
+      merged.dayCollectedByDistrict[districtId] = {
+        butcher: Boolean(collected?.butcher),
+        tavern: Boolean(collected?.tavern),
+        market: Boolean(collected?.market),
+      };
+      const storedPois = merged.activePoisByDistrict[districtId];
+      merged.activePoisByDistrict[districtId] = Array.isArray(storedPois)
+        ? storedPois.filter((poi) => POI_TYPES.includes(poi.type))
+        : [];
+    });
+    if (!data.activePoisByDistrict && Array.isArray(data.activePois)) {
+      merged.activePoisByDistrict[resolvedDistrictId] = data.activePois.filter((poi) =>
+        POI_TYPES.includes(poi.type)
+      );
+    }
     merged.housedPop = Math.max(0, merged.housedPop || 0);
     merged.campPop = Math.max(0, merged.campPop || 0);
     merged.housingCapacity = Math.max(0, merged.housingCapacity || 0);
@@ -268,11 +329,12 @@ export const loadGameState = () => {
 };
 
 export const spawnPoisForDay = (state) => {
-  state.activePois = [];
-  return state.activePois;
+  state.activePoisByDistrict = createDistrictPois();
+  return ensureDistrictPois(state, state.currentDistrictId);
 };
 
 export const spawnPoisForNight = (state, districtConfig) => {
+  const districtId = districtConfig?.id || state.currentDistrictId;
   const anchors = getNightPoiPoints(
     districtConfig || getDistrictConfig(state.currentDistrictId)
   );
@@ -326,15 +388,14 @@ export const spawnPoisForNight = (state, districtConfig) => {
     }
   }
 
-  state.activePois = nextPois;
-  return state.activePois;
+  state.activePoisByDistrict = state.activePoisByDistrict || createDistrictPois();
+  state.activePoisByDistrict[districtId] = nextPois;
+  return state.activePoisByDistrict[districtId];
 };
 
 export const resolvePoi = (state, id) => {
-  if (!Array.isArray(state.activePois)) {
-    return null;
-  }
-  const poi = state.activePois.find((entry) => entry.id === id);
+  const pois = ensureDistrictPois(state, state.currentDistrictId);
+  const poi = pois.find((entry) => entry.id === id);
   if (!poi || poi.resolved) {
     return null;
   }
@@ -358,11 +419,7 @@ export const startDay = (state, { advanceDay }) => {
   state.phase = 'DAY';
   state.dayActionsRemaining = DAY_ACTIONS;
   spawnPoisForDay(state);
-  state.locationCollected = {
-    butcher: false,
-    tavern: false,
-    market: false,
-  };
+  state.dayCollectedByDistrict = createDistrictCollections();
 
   const baselineTension = state.routeGuardedTonight ? 0 : 5;
   state.tension = clampMeter(state.tension + baselineTension);
@@ -441,7 +498,8 @@ export const collectLocation = (state, locationKey) => {
   if (state.phase !== 'DAY' || state.dayActionsRemaining <= 0) {
     return false;
   }
-  if (state.locationCollected[locationKey]) {
+  const collected = ensureDistrictCollections(state, state.currentDistrictId);
+  if (collected[locationKey]) {
     return false;
   }
 
@@ -459,7 +517,7 @@ export const collectLocation = (state, locationKey) => {
   state.foodScraps += reward.scraps;
   state.foodFatty += reward.fatty;
   state.dayActionsRemaining -= 1;
-  state.locationCollected[locationKey] = true;
+  collected[locationKey] = true;
   return true;
 };
 

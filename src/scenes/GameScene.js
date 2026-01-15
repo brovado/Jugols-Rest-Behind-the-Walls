@@ -67,7 +67,7 @@ export default class GameScene extends Phaser.Scene {
     if (!this.state.eventLog?.length) {
       addEvent(this.state, `Day 1 begins in the ${this.currentDistrict.displayName}.`);
     }
-    if (this.state.phase === 'NIGHT' && this.state.activePois?.length === 0) {
+    if (this.state.phase === 'NIGHT' && this.getDistrictPois().length === 0) {
       spawnPoisForNight(this.state, this.currentDistrict);
     }
 
@@ -495,10 +495,8 @@ export default class GameScene extends Phaser.Scene {
     this.player.setPosition(gateway.spawnX, gateway.spawnY);
     this.lastPosition = { x: gateway.spawnX, y: gateway.spawnY };
 
-    if (this.state.phase === 'NIGHT') {
+    if (this.state.phase === 'NIGHT' && this.getDistrictPois().length === 0) {
       spawnPoisForNight(this.state, districtConfig);
-    } else {
-      spawnPoisForDay(this.state);
     }
     addEvent(this.state, `Entered ${districtConfig.displayName}.`);
     this.syncPoiMarkers(true);
@@ -692,10 +690,17 @@ export default class GameScene extends Phaser.Scene {
   }
 
   getActivePois() {
-    if (!Array.isArray(this.state.activePois)) {
+    const pois = this.getDistrictPois();
+    return pois.filter((poi) => !poi.resolved);
+  }
+
+  getDistrictPois() {
+    const activePoisByDistrict = this.state.activePoisByDistrict;
+    if (!activePoisByDistrict) {
       return [];
     }
-    return this.state.activePois.filter((poi) => !poi.resolved);
+    const currentPois = activePoisByDistrict[this.state.currentDistrictId];
+    return Array.isArray(currentPois) ? currentPois : [];
   }
 
   getNearestPoi(activePois) {
@@ -787,7 +792,7 @@ export default class GameScene extends Phaser.Scene {
     if (!this.poiLayer) {
       return;
     }
-    const activePois = Array.isArray(this.state.activePois) ? this.state.activePois : [];
+    const activePois = this.getDistrictPois();
     const activeIds = new Set(activePois.map((poi) => poi.id));
 
     this.poiMarkers.forEach((marker, id) => {
