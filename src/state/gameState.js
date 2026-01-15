@@ -11,6 +11,11 @@ import {
   applyBlessingPackStats,
   pruneExpiredBlessings,
 } from '../world/blessings.js';
+import {
+  getContactById,
+  getContactFactionEffect,
+  getContactsByDistrict,
+} from '../world/contacts.js';
 
 const DAY_ACTIONS = 5;
 const BASE_INCOMING = 3;
@@ -228,11 +233,7 @@ const getNightPoiPoints = (districtConfig) =>
 
 const createDistrictCollections = () =>
   Object.keys(DISTRICTS).reduce((acc, id) => {
-    acc[id] = {
-      butcher: false,
-      tavern: false,
-      market: false,
-    };
+    acc[id] = {};
     return acc;
   }, {});
 
@@ -259,11 +260,7 @@ const ensureDistrictCollections = (state, districtId) => {
     state.dayCollectedByDistrict = createDistrictCollections();
   }
   if (!state.dayCollectedByDistrict[districtId]) {
-    state.dayCollectedByDistrict[districtId] = {
-      butcher: false,
-      tavern: false,
-      market: false,
-    };
+    state.dayCollectedByDistrict[districtId] = {};
   }
   return state.dayCollectedByDistrict[districtId];
 };
@@ -511,18 +508,37 @@ export const loadGameState = () => {
     };
     const legacyCollected = data.locationCollected;
     if (!data.dayCollectedByDistrict && legacyCollected) {
+      const districtContacts = getContactsByDistrict(resolvedDistrictId);
+      const mapped = districtContacts.reduce((acc, contact) => {
+        if (contact.legacySlot && legacyCollected[contact.legacySlot]) {
+          acc[contact.id] = true;
+        }
+        return acc;
+      }, {});
       merged.dayCollectedByDistrict[resolvedDistrictId] = {
         ...merged.dayCollectedByDistrict[resolvedDistrictId],
-        ...legacyCollected,
+        ...mapped,
       };
     }
     Object.keys(DISTRICTS).forEach((districtId) => {
       const collected = merged.dayCollectedByDistrict[districtId];
-      merged.dayCollectedByDistrict[districtId] = {
-        butcher: Boolean(collected?.butcher),
-        tavern: Boolean(collected?.tavern),
-        market: Boolean(collected?.market),
-      };
+      const nextCollected =
+        collected && typeof collected === 'object' ? { ...collected } : {};
+      Object.keys(nextCollected).forEach((key) => {
+        nextCollected[key] = Boolean(nextCollected[key]);
+      });
+      const districtContacts = getContactsByDistrict(districtId);
+      districtContacts.forEach((contact) => {
+        if (contact.legacySlot && nextCollected[contact.legacySlot]) {
+          nextCollected[contact.id] = true;
+        }
+      });
+      ['butcher', 'tavern', 'market'].forEach((legacyKey) => {
+        if (legacyKey in nextCollected) {
+          delete nextCollected[legacyKey];
+        }
+      });
+      merged.dayCollectedByDistrict[districtId] = nextCollected;
       const storedPois = merged.activePoisByDistrict[districtId];
       merged.activePoisByDistrict[districtId] = Array.isArray(storedPois)
         ? storedPois
@@ -816,20 +832,22 @@ export const collectLocation = (state, locationKey) => {
   if (collected[locationKey]) {
     return false;
   }
-
-  const rewards = {
-    butcher: { scraps: 1, fatty: 2 },
-    tavern: { scraps: 2, fatty: 0 },
-    market: { scraps: 1, fatty: 1 },
-  };
-
-  const reward = rewards[locationKey];
-  if (!reward) {
+  const contact = getContactById(locationKey);
+  if (!contact) {
     return false;
   }
 
-  state.foodScraps += reward.scraps;
-  state.foodFatty += reward.fatty;
+  const factionEffect = getContactFactionEffect(contact.factionId);
+  const scrapsBonus = factionEffect?.scrapsBonus || 0;
+  const fattyBonus = factionEffect?.fattyBonus || 0;
+  const tensionDelta = factionEffect?.tensionDelta || 0;
+  const reward = contact.produces || { scraps: 0, fatty: 0 };
+
+  state.foodScraps += reward.scraps + scrapsBonus;
+  state.foodFatty += reward.fatty + fattyBonus;
+  if (tensionDelta) {
+    state.tension = clampMeter(state.tension + tensionDelta);
+  }
   state.dayActionsRemaining -= 1;
   collected[locationKey] = true;
   return true;
