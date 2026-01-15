@@ -1,7 +1,9 @@
 const DAY_ACTIONS = 5;
-const HOUSING_CAPACITY = 4;
-const IMMIGRATION_BURST = 6;
+const BASE_INCOMING = 3;
+const BURST_INTERVAL = 3;
+const BURST_AMOUNT = 12;
 const MAX_METER = 100;
+const POP_TARGET = 60;
 const SAVE_KEY = 'jugols-rest-save';
 
 // Tunable pack rules and role-based contributions.
@@ -22,6 +24,14 @@ const FATTY_POWER_BY_ROLE = {
 };
 
 const clampMeter = (value) => Math.max(0, Math.min(MAX_METER, value));
+
+const getAvailableHousing = (state) =>
+  Math.max(0, (state.housingCapacity || 0) - (state.housedPop || 0));
+
+const getTotalPopulation = (state) => (state.housedPop || 0) + (state.campPop || 0);
+
+const getForecastForDay = (dayNumber) =>
+  BASE_INCOMING + (dayNumber % BURST_INTERVAL === 0 ? BURST_AMOUNT : 0);
 
 const createPack = () => ([
   {
@@ -122,6 +132,11 @@ export const createInitialState = () => ({
   collapseDays: 0,
   hyenaStaminaBasePenalty: 0,
   routeGuardedTonight: false,
+  housedPop: 6,
+  campPop: 0,
+  incomingNextDay: getForecastForDay(1),
+  housingCapacity: 10,
+  housingBoostedTonight: false,
   locationCollected: {
     butcher: false,
     tavern: false,
@@ -159,7 +174,7 @@ export const loadGameState = () => {
     }
     const base = createInitialState();
     const data = JSON.parse(raw);
-    return {
+    const merged = {
       ...base,
       ...data,
       pack: normalizePack(data.pack),
@@ -169,6 +184,14 @@ export const loadGameState = () => {
       },
       eventLog: Array.isArray(data.eventLog) ? data.eventLog : [],
     };
+    merged.housedPop = Math.max(0, merged.housedPop || 0);
+    merged.campPop = Math.max(0, merged.campPop || 0);
+    merged.housingCapacity = Math.max(0, merged.housingCapacity || 0);
+    merged.incomingNextDay =
+      merged.incomingNextDay ?? getForecastForDay(merged.dayNumber + 1);
+    merged.campActive = merged.campPop > 0;
+    merged.campPressure = clampMeter(merged.campPressure || 0);
+    return merged;
   } catch (error) {
     console.warn('Failed to load game state', error);
     return null;
@@ -200,21 +223,38 @@ export const startDay = (state, { advanceDay }) => {
   state.tension = clampMeter(state.tension + baselineTension);
   state.routeGuardedTonight = false;
 
-  if (state.campActive) {
-    state.tension = clampMeter(state.tension + 10);
-    state.overgrowth = clampMeter(state.overgrowth + 8);
-    state.campPressure = clampMeter(state.campPressure + 12);
+  const arrivals = Math.max(0, state.incomingNextDay || 0);
+  const availableHousing = getAvailableHousing(state);
+  const toHouse = Math.min(arrivals, availableHousing);
+  const overflow = Math.max(0, arrivals - toHouse);
+  state.housedPop += toHouse;
+  state.campPop += overflow;
+  state.campActive = state.campPop > 0;
+  if (arrivals > 0) {
+    addEvent(
+      state,
+      `Dawn: +${arrivals} arrivals. Housed +${toHouse}, Camped +${overflow}.`
+    );
   }
 
-  if (state.dayNumber % 3 === 0) {
-    const overflow = IMMIGRATION_BURST - HOUSING_CAPACITY;
-    if (overflow > 0) {
-      state.campActive = true;
-      state.campPressure = Math.max(state.campPressure, 30);
-    }
+  if (state.campPop > 0) {
+    state.campPressure = clampMeter(
+      state.campPressure + 5 + Math.floor(state.campPop / 5) * 2
+    );
+    state.tension = clampMeter(
+      state.tension + 5 + Math.floor(state.campPop / 5) * 3
+    );
+    state.overgrowth = clampMeter(
+      state.overgrowth + 3 + Math.floor(state.campPop / 10) * 2
+    );
+  } else {
+    state.campPressure = clampMeter(state.campPressure - 10);
   }
 
-  evaluateStability(state);
+  state.incomingNextDay = getForecastForDay(state.dayNumber + 1);
+  addEvent(state, `Forecast: +${state.incomingNextDay} arriving tomorrow.`);
+
+  evaluateVictory(state);
   evaluateCollapse(state);
 };
 
@@ -225,6 +265,7 @@ export const startNight = (state) => {
   state.packStamina = Math.max(0, staminaBase + totals.stamina);
   state.packPower = Math.max(0, PACK_BASE_POWER + totals.power);
   state.routeGuardedTonight = false;
+  state.housingBoostedTonight = false;
 };
 
 export const endNight = (state) => {
@@ -325,12 +366,15 @@ export const stabilizeCamp = (state) => {
   }
   state.foodScraps -= 2;
   state.campPressure = clampMeter(state.campPressure - 20);
-  if (state.campPressure <= 0) {
-    state.campActive = false;
-    state.campPressure = 0;
+  const availableHousing = getAvailableHousing(state);
+  const moved = Math.min(availableHousing, 3, state.campPop);
+  if (moved > 0) {
+    state.housedPop += moved;
+    state.campPop -= moved;
   }
+  state.campActive = state.campPop > 0;
   state.dayActionsRemaining -= 1;
-  return true;
+  return { moved };
 };
 
 export const clearOvergrowth = (state) => {
@@ -340,6 +384,8 @@ export const clearOvergrowth = (state) => {
   state.packStamina -= 2;
   const hasWarden = hasPackRole(state.pack, 'Warden');
   state.overgrowth = clampMeter(state.overgrowth - (hasWarden ? 25 : 20));
+  state.housingCapacity += 1;
+  addEvent(state, 'Cleared lots: Housing capacity +1.');
   return true;
 };
 
@@ -363,23 +409,16 @@ export const suppressThreat = (state) => {
   }
   state.packStamina -= 3;
   state.threatActive = false;
+  if (!state.housingBoostedTonight) {
+    state.housingCapacity += 1;
+    state.housingBoostedTonight = true;
+    addEvent(state, 'Secured a safehouse: Housing capacity +1.');
+  }
   return true;
 };
 
-const evaluateStability = (state) => {
-  const stable =
-    state.overgrowth <= 30 &&
-    state.threatActive === false &&
-    state.tension <= 60 &&
-    (!state.campActive || state.campPressure <= 40);
-
-  if (stable) {
-    state.consecutiveStableDays += 1;
-  } else {
-    state.consecutiveStableDays = 0;
-  }
-
-  if (state.consecutiveStableDays >= 3) {
+const evaluateVictory = (state) => {
+  if (getTotalPopulation(state) >= POP_TARGET) {
     state.victory = true;
   }
 };

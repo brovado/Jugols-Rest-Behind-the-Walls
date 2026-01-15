@@ -25,6 +25,14 @@ const DEFAULT_PANELS = {
     disabled: false,
     stateText: '',
   },
+  population: {
+    open: true,
+    dirty: false,
+    dirtyCount: 0,
+    active: false,
+    disabled: false,
+    stateText: '',
+  },
   controls: {
     open: true,
     dirty: false,

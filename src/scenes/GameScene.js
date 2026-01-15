@@ -195,7 +195,7 @@ export default class GameScene extends Phaser.Scene {
     this.victoryOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false).setDepth(80);
     const victoryBg = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x0f172a, 0.8).setOrigin(0, 0);
     const victoryText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, 'Victory!\nJugol’s Rest Stabilized', {
+      .text(this.scale.width / 2, this.scale.height / 2, 'Victory!\nPopulation Target Reached', {
         fontSize: '36px',
         color: '#f8fafc',
         align: 'center',
@@ -425,8 +425,12 @@ export default class GameScene extends Phaser.Scene {
   }
 
   handleStabilizeCamp() {
-    if (stabilizeCamp(this.state)) {
+    const result = stabilizeCamp(this.state);
+    if (result) {
       addEvent(this.state, 'Stabilized the camp with fresh supplies.');
+      if (result.moved > 0) {
+        addEvent(this.state, `Stabilized camp: Moved ${result.moved} into housing.`);
+      }
       this.updateHud();
     }
   }

@@ -72,6 +72,37 @@ const createMeter = (label, color) => {
   };
 };
 
+const createPopulationRow = (label) => {
+  const labelEl = createElement('div', 'status-label', label);
+  const valueEl = createElement('div', 'status-value', '0');
+  return { labelEl, valueEl };
+};
+
+const createPopulationBar = (label, color) => {
+  const container = createElement('div', 'population-bar');
+  const header = createElement('div', 'population-bar-header');
+  const labelEl = createElement('div', null, label);
+  const valueEl = createElement('div', null, '0');
+  header.append(labelEl, valueEl);
+
+  const track = createElement('div', 'population-bar-track');
+  const fill = createElement('div', 'population-bar-fill');
+  fill.style.background = color;
+  track.appendChild(fill);
+
+  container.append(header, track);
+
+  return {
+    container,
+    update: (value, total) => {
+      const safeTotal = total > 0 ? total : 1;
+      const ratio = Math.max(0, Math.min(1, value / safeTotal));
+      fill.style.width = `${Math.round(ratio * 100)}%`;
+      valueEl.textContent = total > 0 ? `${value} / ${total}` : `${value}`;
+    },
+  };
+};
+
 export const initDomHud = (state, callbacks) => {
   if (domHudInstance) {
     return domHudInstance;
@@ -80,15 +111,17 @@ export const initDomHud = (state, callbacks) => {
   const actionsPanel = document.getElementById('actions-panel');
   const packPanel = document.getElementById('pack-panel');
   const metersPanel = document.getElementById('meters-panel');
+  const populationPanel = document.getElementById('population-panel');
   const consoleLog = document.getElementById('console-log');
 
-  if (!actionsPanel || !packPanel || !metersPanel || !consoleLog) {
+  if (!actionsPanel || !packPanel || !metersPanel || !populationPanel || !consoleLog) {
     return null;
   }
 
   actionsPanel.innerHTML = '';
   packPanel.innerHTML = '';
   metersPanel.innerHTML = '';
+  populationPanel.innerHTML = '';
 
   const hudStatus = createElement('div', 'hud-status');
   const hudStatusRow = createElement('div', 'hud-status-row');
@@ -405,6 +438,23 @@ export const initDomHud = (state, callbacks) => {
     threatMeter.container
   );
 
+  const populationGrid = createElement('div', 'population-grid');
+  const populationRows = {
+    total: createPopulationRow('Total Population'),
+    housed: createPopulationRow('Housed'),
+    camped: createPopulationRow('Camped'),
+    available: createPopulationRow('Available Housing'),
+    incoming: createPopulationRow('Incoming Next Day'),
+  };
+  Object.values(populationRows).forEach(({ labelEl, valueEl }) => {
+    populationGrid.append(labelEl, valueEl);
+  });
+
+  const housedBar = createPopulationBar('Housed', '#4ade80');
+  const campedBar = createPopulationBar('Camped', '#f97316');
+
+  populationPanel.append(populationGrid, housedBar.container, campedBar.container);
+
   let interactionLocked = false;
   let lastEventCount = 0;
   let statusFlashTimer = null;
@@ -414,6 +464,8 @@ export const initDomHud = (state, callbacks) => {
   let lastPackChangeAt = 0;
   let lastPackFood = null;
   let lastPackVisible = false;
+  let lastPopulationSnapshot = null;
+  let lastPopulationChangeAt = 0;
 
   const updateFeedPanel = (stateSnapshot) => {
     const maxScraps = stateSnapshot.foodScraps;
@@ -506,13 +558,13 @@ export const initDomHud = (state, callbacks) => {
   const updateMeters = (stateSnapshot) => {
     tensionMeter.update(stateSnapshot.tension, 100);
     overgrowthMeter.update(stateSnapshot.overgrowth, 100);
-    campMeter.update(stateSnapshot.campActive ? stateSnapshot.campPressure : 0, 100);
+    campMeter.update(stateSnapshot.campPressure, 100);
     threatMeter.update(stateSnapshot.threatActive ? 100 : 0, 100);
 
     const snapshot = {
       tension: stateSnapshot.tension,
       overgrowth: stateSnapshot.overgrowth,
-      camp: stateSnapshot.campActive ? stateSnapshot.campPressure : 0,
+      camp: stateSnapshot.campPressure,
       threat: stateSnapshot.threatActive ? 100 : 0,
     };
 
@@ -530,6 +582,46 @@ export const initDomHud = (state, callbacks) => {
       }
     }
     lastMeterSnapshot = snapshot;
+  };
+
+  const updatePopulationPanel = (stateSnapshot) => {
+    const housed = Math.max(0, stateSnapshot.housedPop || 0);
+    const camped = Math.max(0, stateSnapshot.campPop || 0);
+    const total = housed + camped;
+    const capacity = Math.max(0, stateSnapshot.housingCapacity || 0);
+    const available = Math.max(0, capacity - housed);
+    const incoming = Math.max(0, stateSnapshot.incomingNextDay || 0);
+
+    populationRows.total.valueEl.textContent = `${total}`;
+    populationRows.housed.valueEl.textContent = `${housed}`;
+    populationRows.camped.valueEl.textContent = `${camped}`;
+    populationRows.available.valueEl.textContent = `${available}`;
+    populationRows.incoming.valueEl.textContent = `${incoming}`;
+
+    housedBar.update(housed, total);
+    campedBar.update(camped, total);
+
+    const snapshot = {
+      housed,
+      camped,
+      total,
+      capacity,
+      available,
+      incoming,
+    };
+
+    if (lastPopulationSnapshot) {
+      const changed = Object.keys(snapshot).some(
+        (key) => snapshot[key] !== lastPopulationSnapshot[key]
+      );
+      if (changed) {
+        lastPopulationChangeAt = window.performance.now();
+        if (!isPanelOpen('population')) {
+          setPanelDirty('population', true);
+        }
+      }
+    }
+    lastPopulationSnapshot = snapshot;
   };
 
   const updatePackPanel = (stateSnapshot) => {
@@ -638,6 +730,7 @@ export const initDomHud = (state, callbacks) => {
       updateTopStatus(stateSnapshot);
       updateButtons(stateSnapshot, context);
       updateMeters(stateSnapshot);
+      updatePopulationPanel(stateSnapshot);
       updatePackPanel(stateSnapshot);
       updateLog(stateSnapshot);
 
@@ -649,19 +742,27 @@ export const initDomHud = (state, callbacks) => {
           : `Stamina ${stateSnapshot.packStamina}`
       );
       setPanelStateText('meters', stateSnapshot.threatActive ? 'Alert' : 'Stable');
+      setPanelStateText(
+        'population',
+        stateSnapshot.campPop > 0 ? `Camped: ${stateSnapshot.campPop}` : 'Camp: None'
+      );
 
       const now = window.performance.now();
       const metersActive =
         now - lastMeterChangeAt < 2000 ||
         stateSnapshot.tension >= 80 ||
         stateSnapshot.overgrowth >= 80 ||
-        (stateSnapshot.campActive && stateSnapshot.campPressure >= 70) ||
+        stateSnapshot.campPressure >= 70 ||
         stateSnapshot.threatActive;
       const packActive =
         now - lastPackChangeAt < 2000 ||
         lastPackVisible ||
         stateSnapshot.pack.some((hyena) => hyena.hunger >= 70);
       setPanelActive('meters', metersActive);
+      setPanelActive(
+        'population',
+        now - lastPopulationChangeAt < 2000 || stateSnapshot.campPop > 0
+      );
       setPanelActive('pack', packActive);
     },
     toggleFeedPanel: (show) => {
