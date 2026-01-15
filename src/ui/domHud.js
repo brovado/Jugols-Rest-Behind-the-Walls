@@ -15,7 +15,6 @@ import {
   isPanelOpen,
   setPanelActive,
   setPanelDirty,
-  setPanelOpen,
   setPanelStateText,
 } from './panelDock.js';
 
@@ -203,46 +202,16 @@ export const initDomHud = (state, callbacks) => {
 
   const packSummary = createElement('div', null, 'Tonight’s contributions:');
   const packCardsContainer = createElement('div', 'hud-action-group');
-
-  const panelState = { allocations: {} };
-  const feedPanelBody = createElement('div', 'feed-panel');
-  const feedHeader = createElement('div', 'feed-header');
-  const scrapsText = createElement('div', null, 'Scraps: 0');
-  const fattyText = createElement('div', null, 'Fatty: 0');
-  feedHeader.append(scrapsText, fattyText);
-
-  const feedRowsContainer = createElement('div');
-  const feedActions = createElement('div', 'feed-actions');
-
-  const confirmButton = createHudButton('Confirm Feeding', () => {
-    const feedPlan = Object.entries(panelState.allocations).map(([id, alloc]) => ({
-      id,
-      scraps: alloc.scraps,
-      fatty: alloc.fatty,
-    }));
-    callbacks.onConfirmFeed(feedPlan);
-    Object.values(panelState.allocations).forEach((alloc) => {
-      alloc.scraps = 0;
-      alloc.fatty = 0;
-    });
-  });
-
-  const cancelButton = createHudButton('Cancel', () => {
-    Object.values(panelState.allocations).forEach((alloc) => {
-      alloc.scraps = 0;
-      alloc.fatty = 0;
-    });
-    setPanelOpen('feed', false);
-    lastFeedVisible = false;
-  });
-
-  feedActions.append(confirmButton.el, cancelButton.el);
-  feedPanelBody.append(feedHeader, feedRowsContainer, feedActions);
-
   packPanel.append(packSummary, packCardsContainer);
-  feedPanel.append(feedPanelBody);
   const packCards = new Map();
-  const feedRows = [];
+  const feedPanelBody = createElement('div', 'feed-panel');
+  const feedNote = createElement(
+    'div',
+    'feed-note',
+    'Feeding now happens at the Stable command deck in Camp.'
+  );
+  feedPanelBody.append(feedNote);
+  feedPanel.append(feedPanelBody);
 
   const createHyenaCard = (hyena) => {
     const card = createElement('div', 'pack-card');
@@ -275,58 +244,6 @@ export const initDomHud = (state, callbacks) => {
     };
   };
 
-  const createFeedRow = (hyena) => {
-    const row = createElement('div', 'feed-row');
-    const name = createElement('div', null, hyena.name);
-
-    const scrapsValue = createElement('div', 'feed-alloc', 'Scraps: 0');
-    const fattyValue = createElement('div', 'feed-alloc', 'Fatty: 0');
-
-    const scrapsControls = createElement('div', 'feed-controls');
-    const scrapsLabel = createElement('div', 'feed-alloc', 'Scraps');
-    const scrapsMinus = createElement('button', 'feed-adjust', '-');
-    const scrapsPlus = createElement('button', 'feed-adjust', '+');
-    scrapsControls.append(scrapsLabel, scrapsMinus, scrapsPlus);
-
-    const fattyControls = createElement('div', 'feed-controls');
-    const fattyLabel = createElement('div', 'feed-alloc', 'Fatty');
-    const fattyMinus = createElement('button', 'feed-adjust', '-');
-    const fattyPlus = createElement('button', 'feed-adjust', '+');
-    fattyControls.append(fattyLabel, fattyMinus, fattyPlus);
-
-    row.append(name, scrapsValue, scrapsControls, fattyValue, fattyControls);
-    feedRowsContainer.appendChild(row);
-
-    scrapsMinus.addEventListener('click', () => {
-      panelState.allocations[hyena.id].scraps = Math.max(
-        0,
-        panelState.allocations[hyena.id].scraps - 1
-      );
-    });
-    scrapsPlus.addEventListener('click', () => {
-      panelState.allocations[hyena.id].scraps += 1;
-    });
-    fattyMinus.addEventListener('click', () => {
-      panelState.allocations[hyena.id].fatty = Math.max(
-        0,
-        panelState.allocations[hyena.id].fatty - 1
-      );
-    });
-    fattyPlus.addEventListener('click', () => {
-      panelState.allocations[hyena.id].fatty += 1;
-    });
-
-    return {
-      scrapsValue,
-      fattyValue,
-      scrapsMinus,
-      scrapsPlus,
-      fattyMinus,
-      fattyPlus,
-      hyenaId: hyena.id,
-    };
-  };
-
   const initializePackCards = (stateSnapshot) => {
     packCardsContainer.innerHTML = '';
     packCards.clear();
@@ -335,23 +252,10 @@ export const initDomHud = (state, callbacks) => {
     }
     stateSnapshot.pack.forEach((hyena) => {
       packCards.set(hyena.id, createHyenaCard(hyena));
-      panelState.allocations[hyena.id] = { scraps: 0, fatty: 0 };
-    });
-  };
-
-  const initializeFeedRows = (stateSnapshot) => {
-    feedRowsContainer.innerHTML = '';
-    feedRows.length = 0;
-    if (!Array.isArray(stateSnapshot.pack)) {
-      return;
-    }
-    stateSnapshot.pack.forEach((hyena) => {
-      feedRows.push(createFeedRow(hyena));
     });
   };
 
   initializePackCards(state);
-  initializeFeedRows(state);
 
   const tensionMeter = createMeter('Tension', '#f97316');
   const overgrowthMeter = createMeter('Overgrowth', '#4ade80');
@@ -403,8 +307,6 @@ export const initDomHud = (state, callbacks) => {
   let lastPackSnapshot = null;
   let lastPackChangeAt = 0;
   let lastPackFood = null;
-  let lastFeedChangeAt = 0;
-  let lastFeedVisible = false;
   let lastPopulationSnapshot = null;
   let lastPopulationChangeAt = 0;
   let shrineListVisible = false;
@@ -428,59 +330,6 @@ export const initDomHud = (state, callbacks) => {
     shrineListVisible = !shrineListVisible;
     shrineToggle.textContent = shrineListVisible ? 'Hide' : 'Show';
   });
-
-  const updateFeedPanel = (stateSnapshot) => {
-    const maxScraps = stateSnapshot.foodScraps;
-    const maxFatty = stateSnapshot.foodFatty;
-    const canInteract = !interactionLocked;
-    const allocations = Object.values(panelState.allocations);
-    const sumAllocated = (key) =>
-      allocations.reduce((sum, alloc) => sum + (alloc[key] || 0), 0);
-    const trimAllocations = (key, max) => {
-      let total = sumAllocated(key);
-      if (total <= max) {
-        return;
-      }
-      let excess = total - max;
-      allocations.forEach((alloc) => {
-        if (excess <= 0) {
-          return;
-        }
-        const reduction = Math.min(excess, alloc[key]);
-        alloc[key] -= reduction;
-        excess -= reduction;
-      });
-    };
-
-    trimAllocations('scraps', maxScraps);
-    trimAllocations('fatty', maxFatty);
-
-    const allocatedScraps = sumAllocated('scraps');
-    const allocatedFatty = sumAllocated('fatty');
-
-    scrapsText.textContent = `Scraps: ${allocatedScraps} / ${maxScraps}`;
-    fattyText.textContent = `Fatty: ${allocatedFatty} / ${maxFatty}`;
-
-    feedRows.forEach((row) => {
-      const alloc = panelState.allocations[row.hyenaId];
-      if (!alloc) {
-        return;
-      }
-      row.scrapsValue.textContent = `Scraps: ${alloc.scraps}`;
-      row.fattyValue.textContent = `Fatty: ${alloc.fatty}`;
-      row.scrapsMinus.disabled = !(canInteract && alloc.scraps > 0);
-      row.scrapsPlus.disabled = !(canInteract && allocatedScraps < maxScraps);
-      row.fattyMinus.disabled = !(canInteract && alloc.fatty > 0);
-      row.fattyPlus.disabled = !(canInteract && allocatedFatty < maxFatty);
-    });
-
-    confirmButton.setEnabled(
-      canInteract &&
-        (allocatedScraps > 0 || allocatedFatty > 0) &&
-        stateSnapshot.dayActionsRemaining > 0
-    );
-    cancelButton.setEnabled(canInteract);
-  };
 
   const updateTopStatus = (stateSnapshot) => {
     dayText.textContent = `Day ${stateSnapshot.dayNumber}`;
@@ -817,10 +666,6 @@ export const initDomHud = (state, callbacks) => {
         if (!isPanelOpen('pack')) {
           setPanelDirty('pack', true);
         }
-        lastFeedChangeAt = window.performance.now();
-        if (!isPanelOpen('feed')) {
-          setPanelDirty('feed', true);
-        }
       }
     }
     lastPackSnapshot = packSnapshot;
@@ -837,10 +682,6 @@ export const initDomHud = (state, callbacks) => {
         lastPackChangeAt = window.performance.now();
         if (!isPanelOpen('pack')) {
           setPanelDirty('pack', true);
-        }
-        lastFeedChangeAt = window.performance.now();
-        if (!isPanelOpen('feed')) {
-          setPanelDirty('feed', true);
         }
       }
     }
@@ -883,7 +724,6 @@ export const initDomHud = (state, callbacks) => {
       updateTopStatus(stateSnapshot);
       updatePoiPanel(stateSnapshot, context);
       updateShrinePanel(stateSnapshot, context);
-      updateFeedPanel(stateSnapshot);
       updateMeters(stateSnapshot);
       updatePopulationPanel(stateSnapshot);
       updatePackPanel(stateSnapshot);
@@ -899,9 +739,7 @@ export const initDomHud = (state, callbacks) => {
       );
       setPanelStateText(
         'feed',
-        stateSnapshot.phase === 'DAY'
-          ? `Scraps ${stateSnapshot.foodScraps}`
-          : 'Rest'
+        'Stable'
       );
       setPanelStateText('meters', stateSnapshot.threatActive ? 'Alert' : 'Stable');
       setPanelStateText(
@@ -919,27 +757,17 @@ export const initDomHud = (state, callbacks) => {
       const packActive =
         now - lastPackChangeAt < 2000 ||
         stateSnapshot.pack.some((hyena) => hyena.hunger >= 70);
-      const feedActive =
-        now - lastFeedChangeAt < 2000 ||
-        lastFeedVisible ||
-        stateSnapshot.pack.some((hyena) => hyena.hunger >= 70);
       setPanelActive('meters', metersActive);
       setPanelActive(
         'population',
         now - lastPopulationChangeAt < 2000 || stateSnapshot.campPop > 0
       );
       setPanelActive('pack', packActive);
-      setPanelActive('feed', feedActive);
+      setPanelActive('feed', false);
     },
-    toggleFeedPanel: (show) => {
-      setPanelOpen('feed', show);
-      lastFeedVisible = show;
-    },
-    hideFeedPanel: () => {
-      setPanelOpen('feed', false);
-      lastFeedVisible = false;
-    },
-    isFeedPanelVisible: () => isPanelOpen('feed'),
+    toggleFeedPanel: () => {},
+    hideFeedPanel: () => {},
+    isFeedPanelVisible: () => false,
     setInteractionLocked: (locked) => {
       interactionLocked = locked;
     },

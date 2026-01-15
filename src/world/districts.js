@@ -34,6 +34,11 @@ export const DISTRICTS = {
         color: 0xfbbf24,
       },
     ],
+    campNpcs: [
+      { x: 360, y: 720, label: 'Warden', color: 0x94a3b8 },
+      { x: 520, y: 700, label: 'Warden', color: 0x94a3b8 },
+      { x: 600, y: 760, label: 'Warden', color: 0x94a3b8 },
+    ],
     gateways: [
       {
         x: 1700,

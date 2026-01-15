@@ -13,13 +13,16 @@ import {
   addEvent,
   addNarrativeEvent,
   getDominantCampFaction,
+  getActivePack,
+  getHyenaContribution,
+  syncActivePack,
+  packRules,
   saveGameState,
   loadGameState,
 } from '../state/gameState.js';
 import { applyFactionInfluence } from '../state/factionSystem.js';
 import { getDomUI } from '../ui/domUI.js';
 import { initDomHud } from '../ui/domHud.js';
-import { setPanelOpen } from '../ui/panelDock.js';
 import { moveToward } from '../utils/pathing.js';
 import { getAmbientLine } from '../world/ambient.js';
 import {
@@ -75,8 +78,17 @@ export default class GameScene extends Phaser.Scene {
     this.currentDistrict = null;
     this.isTransitioning = false;
     this.structureMarkers = [];
+    this.campNpcMarkers = [];
     this.currentInteractable = null;
     this.interactKey = null;
+    this.stableOverlay = null;
+    this.stableContent = null;
+    this.stableViewOpen = false;
+    this.stableSelectionId = null;
+    this.stableFeedAllocations = {};
+    this.draftOverlay = null;
+    this.draftContent = null;
+    this.draftOverlayOpen = false;
   }
 
   create(data = {}) {
@@ -109,6 +121,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.handleNarrativePhaseStart();
     this.updateHud();
+    this.refreshDraftOverlay();
     this.cameras.main.fadeIn(500, 0, 0, 0);
 
     this.inputLocked = false;
@@ -123,6 +136,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateDistrictBackground(this.currentDistrict);
     this.createLocations(this.currentDistrict?.dayLocations);
     this.createStructures(this.currentDistrict?.campStructures);
+    this.createCampNpcs(this.currentDistrict?.campNpcs);
   }
 
   setupPlayer() {
@@ -164,6 +178,15 @@ export default class GameScene extends Phaser.Scene {
     this.interactKey = this.input.keyboard.addKey('F');
     this.interactKey.on('down', () => {
       this.handleInteract();
+    });
+    this.escapeKey = this.input.keyboard.addKey('ESC');
+    this.escapeKey.on('down', () => {
+      if (this.draftOverlayOpen) {
+        return;
+      }
+      if (this.stableViewOpen) {
+        this.closeStableView();
+      }
     });
     this.input.on('pointerdown', (pointer) => {
       if (this.state.victory || this.state.gameOver) {
@@ -207,7 +230,7 @@ export default class GameScene extends Phaser.Scene {
 
   setupDomHud() {
     this.domHud = initDomHud(this.state, {
-      onConfirmFeed: (feedPlan) => this.handleFeed(feedPlan),
+      onConfirmFeed: () => {},
     });
   }
 
@@ -280,6 +303,20 @@ export default class GameScene extends Phaser.Scene {
       .setOrigin(0.5);
     continueButton.on('pointerdown', () => this.hideNarrativeOverlay());
     this.narrativeOverlay.add([narrativeBg, narrativeCard, this.narrativeText, continueButton, continueText]);
+
+    this.stableOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false).setDepth(85);
+    const stableBg = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x0f172a, 0.78)
+      .setOrigin(0, 0);
+    this.stableContent = this.add.container(0, 0);
+    this.stableOverlay.add([stableBg, this.stableContent]);
+
+    this.draftOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false).setDepth(88);
+    const draftBg = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x0f172a, 0.85)
+      .setOrigin(0, 0);
+    this.draftContent = this.add.container(0, 0);
+    this.draftOverlay.add([draftBg, this.draftContent]);
   }
 
   createLocations(dayLocations) {
@@ -351,6 +388,34 @@ export default class GameScene extends Phaser.Scene {
         text,
         radius: structure.radius || INTERACT_RADIUS,
       });
+    });
+  }
+
+  createCampNpcs(npcs) {
+    if (Array.isArray(this.campNpcMarkers)) {
+      this.campNpcMarkers.forEach((entry) => {
+        entry.marker?.destroy();
+        entry.text?.destroy();
+      });
+    }
+    this.campNpcMarkers = [];
+    if (!Array.isArray(npcs)) {
+      return;
+    }
+
+    npcs.forEach((npc) => {
+      if (typeof npc.x !== 'number' || typeof npc.y !== 'number') {
+        return;
+      }
+      const marker = this.add.rectangle(npc.x, npc.y, 26, 34, npc.color ?? 0x94a3b8, 0.8);
+      marker.setStrokeStyle(2, npc.color ?? 0x38bdf8, 0.6);
+      const text = this.add.text(npc.x, npc.y - 28, npc.label || 'Warden', {
+        fontSize: '12px',
+        color: '#e2e8f0',
+        backgroundColor: 'rgba(15, 23, 42, 0.6)',
+        padding: { x: 4, y: 2 },
+      }).setOrigin(0.5);
+      this.campNpcMarkers.push({ marker, text });
     });
   }
 
@@ -709,8 +774,483 @@ export default class GameScene extends Phaser.Scene {
     this.currentInteractable.onInteract();
   }
 
+  openStableView() {
+    if (this.stableViewOpen || this.draftOverlayOpen || !this.stableOverlay) {
+      return;
+    }
+    this.stableViewOpen = true;
+    this.stableOverlay.setVisible(true);
+    this.inputLocked = true;
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(true);
+    }
+    this.renderStableView();
+  }
+
+  closeStableView() {
+    if (!this.stableViewOpen) {
+      return;
+    }
+    this.stableViewOpen = false;
+    this.stableOverlay?.setVisible(false);
+    this.stableSelectionId = null;
+    this.inputLocked = false;
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(false);
+    }
+  }
+
+  getStableFeedAllocations(id) {
+    if (!this.stableFeedAllocations[id]) {
+      this.stableFeedAllocations[id] = { scraps: 0, fatty: 0 };
+    }
+    return this.stableFeedAllocations[id];
+  }
+
+  adjustStableFeeding(id, type, delta) {
+    const allocation = this.getStableFeedAllocations(id);
+    const totalAllocated = Object.values(this.stableFeedAllocations).reduce(
+      (sum, entry) => sum + (entry[type] || 0),
+      0
+    );
+    const supply =
+      type === 'scraps' ? this.state.foodScraps : this.state.foodFatty;
+    if (delta > 0 && totalAllocated >= supply) {
+      return;
+    }
+    allocation[type] = Math.max(0, allocation[type] + delta);
+    this.renderStableView();
+  }
+
+  confirmStableFeeding() {
+    const feedPlan = Object.entries(this.stableFeedAllocations).map(([id, alloc]) => ({
+      id,
+      scraps: alloc.scraps || 0,
+      fatty: alloc.fatty || 0,
+    }));
+    if (!feedHyenas(this.state, feedPlan)) {
+      return;
+    }
+    feedPlan.forEach((entry) => {
+      const total = (entry.scraps || 0) + (entry.fatty || 0);
+      if (total <= 0) {
+        return;
+      }
+      const hyena = this.state.hyenaRoster.find((member) => member.id === entry.id);
+      const name = hyena ? hyena.name : 'Hyena';
+      addEvent(
+        this.state,
+        `Fed ${name} (${entry.scraps || 0} scraps, ${entry.fatty || 0} fatty).`
+      );
+    });
+    Object.values(this.stableFeedAllocations).forEach((alloc) => {
+      alloc.scraps = 0;
+      alloc.fatty = 0;
+    });
+    applyFactionInfluence(this.state, 'feed');
+    this.updateHud();
+    this.renderStableView();
+    saveGameState(this.state);
+  }
+
+  assignRosterToSlot(slotIndex) {
+    if (!this.stableSelectionId) {
+      return;
+    }
+    const next = [...(this.state.activePackIds || [])];
+    const existingIndex = next.indexOf(this.stableSelectionId);
+    if (existingIndex !== -1) {
+      next.splice(existingIndex, 1);
+    }
+    next[slotIndex] = this.stableSelectionId;
+    const compacted = next.filter(Boolean).slice(0, this.state.packSizeCap);
+    this.state.activePackIds = compacted;
+    syncActivePack(this.state);
+    this.updateHud();
+    this.renderStableView();
+    saveGameState(this.state);
+  }
+
+  renderStableView() {
+    if (!this.stableContent) {
+      return;
+    }
+    this.stableContent.removeAll(true);
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const margin = 40;
+    const panelGap = 20;
+    const panelWidth = (width - margin * 2 - panelGap * 2) / 3;
+    const panelHeight = height - margin * 2 - 60;
+
+    const title = this.add
+      .text(width / 2, margin - 10, 'Stable Command Deck', {
+        fontSize: '28px',
+        color: '#f8fafc',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5);
+
+    const closeButton = this.add
+      .text(width - margin - 10, margin - 10, 'ESC to Close', {
+        fontSize: '14px',
+        color: '#e2e8f0',
+      })
+      .setOrigin(1, 0.5);
+
+    this.stableContent.add([title, closeButton]);
+
+    const addPanel = (x, y, label) => {
+      const panel = this.add.rectangle(x, y, panelWidth, panelHeight, 0x111827, 0.9);
+      panel.setOrigin(0, 0);
+      panel.setStrokeStyle(2, 0x38bdf8, 0.6);
+      const header = this.add.text(x + 16, y + 12, label, {
+        fontSize: '16px',
+        color: '#f8fafc',
+        fontStyle: 'bold',
+      });
+      this.stableContent.add([panel, header]);
+      return { x, y, header };
+    };
+
+    const packPanel = addPanel(margin, margin + 20, 'Active Pack');
+    const rosterPanel = addPanel(margin + panelWidth + panelGap, margin + 20, 'Roster');
+    const supplyPanel = addPanel(margin + (panelWidth + panelGap) * 2, margin + 20, 'Supplies');
+    const packCapText = this.add.text(
+      packPanel.x + panelWidth - 20,
+      packPanel.y + 14,
+      `Cap ${this.state.packSizeCap}`,
+      { fontSize: '12px', color: '#94a3b8' }
+    ).setOrigin(1, 0);
+    this.stableContent.add(packCapText);
+
+    const activePack = getActivePack(this.state);
+    const packSlots = Array.from({ length: this.state.packSizeCap }, (_, idx) => activePack[idx] || null);
+    packSlots.forEach((hyena, idx) => {
+      const slotY = packPanel.y + 50 + idx * 70;
+      const slotRect = this.add.rectangle(
+        packPanel.x + 16,
+        slotY,
+        panelWidth - 32,
+        54,
+        hyena ? 0x1e293b : 0x0f172a,
+        0.95
+      );
+      slotRect.setOrigin(0, 0);
+      slotRect.setStrokeStyle(1, this.stableSelectionId ? 0x38bdf8 : 0x334155, 0.6);
+      slotRect.setInteractive({ useHandCursor: true });
+      slotRect.on('pointerdown', () => this.assignRosterToSlot(idx));
+
+      const nameText = this.add.text(
+        packPanel.x + 28,
+        slotY + 8,
+        hyena ? `${hyena.name} (${hyena.role})` : `Empty Slot ${idx + 1}`,
+        { fontSize: '14px', color: '#e2e8f0' }
+      );
+      const detailText = this.add.text(
+        packPanel.x + 28,
+        slotY + 28,
+        hyena ? `Temperament: ${hyena.temperament}` : 'Assign from roster',
+        { fontSize: '12px', color: '#94a3b8' }
+      );
+      this.stableContent.add([slotRect, nameText, detailText]);
+    });
+
+    const rosterStartY = rosterPanel.y + 50;
+    const roster = Array.isArray(this.state.hyenaRoster) ? this.state.hyenaRoster : [];
+    roster.forEach((hyena, index) => {
+      const rowY = rosterStartY + index * 48;
+      if (rowY > rosterPanel.y + panelHeight - 40) {
+        return;
+      }
+      const isSelected = this.stableSelectionId === hyena.id;
+      const rowRect = this.add.rectangle(
+        rosterPanel.x + 16,
+        rowY,
+        panelWidth - 32,
+        38,
+        isSelected ? 0x38bdf8 : 0x1e293b,
+        0.85
+      );
+      rowRect.setOrigin(0, 0);
+      rowRect.setStrokeStyle(1, 0x334155, 0.6);
+      rowRect.setInteractive({ useHandCursor: true });
+      rowRect.on('pointerdown', () => {
+        this.stableSelectionId = hyena.id;
+        this.renderStableView();
+      });
+
+      const rowText = this.add.text(
+        rosterPanel.x + 26,
+        rowY + 10,
+        `${hyena.name} • ${hyena.role}`,
+        { fontSize: '13px', color: isSelected ? '#0f172a' : '#e2e8f0' }
+      );
+      this.stableContent.add([rowRect, rowText]);
+    });
+
+    const suppliesY = supplyPanel.y + 50;
+    const suppliesText = this.add.text(
+      supplyPanel.x + 16,
+      suppliesY,
+      `Scraps: ${this.state.foodScraps}\nFatty: ${this.state.foodFatty}\nSupplies Tier: ${this.state.suppliesTier}`,
+      { fontSize: '14px', color: '#e2e8f0', lineSpacing: 6 }
+    );
+
+    const baseStamina = Math.max(
+      0,
+      packRules.PACK_BASE_STAMINA - (this.state.hyenaStaminaBasePenalty || 0)
+    );
+    const suppliesBonus = Math.max(0, this.state.suppliesTier || 1);
+    const previewTotals = activePack.reduce(
+      (totals, hyena) => {
+        const alloc = this.getStableFeedAllocations(hyena.id);
+        const previewHyena = {
+          ...hyena,
+          fedToday: {
+            scraps: (hyena.fedToday?.scraps || 0) + (alloc.scraps || 0),
+            fatty: (hyena.fedToday?.fatty || 0) + (alloc.fatty || 0),
+          },
+        };
+        const contribution = getHyenaContribution(previewHyena);
+        return {
+          stamina: totals.stamina + contribution.stamina,
+          power: totals.power + contribution.power,
+        };
+      },
+      { stamina: 0, power: 0 }
+    );
+    const previewText = this.add.text(
+      supplyPanel.x + 16,
+      suppliesY + 90,
+      `Preview Tonight:\nStamina ${baseStamina + previewTotals.stamina + suppliesBonus}\nPower ${packRules.PACK_BASE_POWER + previewTotals.power}`,
+      { fontSize: '14px', color: '#f8fafc', lineSpacing: 6 }
+    );
+
+    const feedHeader = this.add.text(
+      supplyPanel.x + 16,
+      suppliesY + 170,
+      'Feeding Tray (Active Pack)',
+      { fontSize: '14px', color: '#f8fafc', fontStyle: 'bold' }
+    );
+
+    let feedRowY = suppliesY + 200;
+    activePack.forEach((hyena) => {
+      const alloc = this.getStableFeedAllocations(hyena.id);
+      const rowLabel = this.add.text(
+        supplyPanel.x + 16,
+        feedRowY,
+        `${hyena.name}`,
+        { fontSize: '13px', color: '#e2e8f0' }
+      );
+      const scrapsLabel = this.add.text(
+        supplyPanel.x + 120,
+        feedRowY,
+        `Scraps ${alloc.scraps}`,
+        { fontSize: '12px', color: '#94a3b8' }
+      );
+      const fattyLabel = this.add.text(
+        supplyPanel.x + 210,
+        feedRowY,
+        `Fatty ${alloc.fatty}`,
+        { fontSize: '12px', color: '#94a3b8' }
+      );
+
+      const createAdjust = (x, label, onClick) => {
+        const rect = this.add.rectangle(x, feedRowY + 18, 20, 20, 0x38bdf8, 0.9);
+        rect.setOrigin(0, 0.5);
+        rect.setInteractive({ useHandCursor: true });
+        rect.on('pointerdown', onClick);
+        const text = this.add.text(x + 6, feedRowY + 10, label, {
+          fontSize: '12px',
+          color: '#0f172a',
+        }).setOrigin(0, 0.5);
+        this.stableContent.add([rect, text]);
+      };
+
+      createAdjust(supplyPanel.x + 190, '+', () => this.adjustStableFeeding(hyena.id, 'scraps', 1));
+      createAdjust(supplyPanel.x + 230, '+', () => this.adjustStableFeeding(hyena.id, 'fatty', 1));
+      createAdjust(supplyPanel.x + 170, '-', () => this.adjustStableFeeding(hyena.id, 'scraps', -1));
+      createAdjust(supplyPanel.x + 250, '-', () => this.adjustStableFeeding(hyena.id, 'fatty', -1));
+
+      this.stableContent.add([rowLabel, scrapsLabel, fattyLabel]);
+      feedRowY += 50;
+    });
+
+    const confirmButton = this.add.rectangle(
+      supplyPanel.x + 16,
+      supplyPanel.y + panelHeight - 60,
+      panelWidth - 32,
+      36,
+      0x38bdf8,
+      0.9
+    );
+    confirmButton.setOrigin(0, 0);
+    confirmButton.setInteractive({ useHandCursor: true });
+    confirmButton.on('pointerdown', () => this.confirmStableFeeding());
+    const confirmText = this.add.text(
+      supplyPanel.x + panelWidth / 2,
+      supplyPanel.y + panelHeight - 42,
+      this.state.phase === 'DAY' ? 'Confirm Feeding (1 Action)' : 'Feeding Locked (Night)',
+      {
+        fontSize: '13px',
+        color: this.state.phase === 'DAY' ? '#0f172a' : '#94a3b8',
+        fontStyle: 'bold',
+      }
+    ).setOrigin(0.5);
+    if (this.state.phase !== 'DAY' || this.state.dayActionsRemaining <= 0) {
+      confirmButton.setFillStyle(0x475569, 0.6);
+      confirmButton.disableInteractive();
+      if (this.state.phase === 'DAY' && this.state.dayActionsRemaining <= 0) {
+        confirmText.setText('No Actions Remaining').setColor('#94a3b8');
+      }
+    }
+
+    this.stableContent.add([suppliesText, previewText, feedHeader, confirmButton, confirmText]);
+  }
+
+  refreshDraftOverlay() {
+    if (!this.state.draftActive) {
+      if (this.draftOverlayOpen) {
+        this.closeDraftOverlay();
+      }
+      return;
+    }
+    if (!this.draftOverlayOpen) {
+      this.openDraftOverlay();
+    } else {
+      this.renderDraftOverlay();
+    }
+  }
+
+  openDraftOverlay() {
+    if (!this.draftOverlay) {
+      return;
+    }
+    this.draftOverlayOpen = true;
+    this.draftOverlay.setVisible(true);
+    this.inputLocked = true;
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(true);
+    }
+    this.renderDraftOverlay();
+  }
+
+  closeDraftOverlay() {
+    if (!this.draftOverlayOpen) {
+      return;
+    }
+    this.draftOverlayOpen = false;
+    this.draftOverlay?.setVisible(false);
+    this.inputLocked = false;
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(false);
+    }
+  }
+
+  recruitDraftHyena(candidate, addToPack) {
+    if (!candidate) {
+      return;
+    }
+    this.state.hyenaRoster = Array.isArray(this.state.hyenaRoster)
+      ? [...this.state.hyenaRoster, candidate]
+      : [candidate];
+    if (addToPack && this.state.activePackIds.length < this.state.packSizeCap) {
+      this.state.activePackIds.push(candidate.id);
+    }
+    syncActivePack(this.state);
+    this.state.draftActive = false;
+    this.state.draftChoices = [];
+    addEvent(this.state, `Drafted ${candidate.name} (${candidate.role}).`);
+    saveGameState(this.state);
+    this.closeDraftOverlay();
+    this.updateHud();
+  }
+
+  renderDraftOverlay() {
+    if (!this.draftContent) {
+      return;
+    }
+    this.draftContent.removeAll(true);
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const title = this.add.text(width / 2, 120, 'Draft Phase', {
+      fontSize: '32px',
+      color: '#f8fafc',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    const subtitle = this.add.text(width / 2, 160, 'Choose a new hyena for the roster.', {
+      fontSize: '16px',
+      color: '#cbd5f5',
+    }).setOrigin(0.5);
+    this.draftContent.add([title, subtitle]);
+
+    const choices = Array.isArray(this.state.draftChoices) ? this.state.draftChoices : [];
+    const cardWidth = 220;
+    const cardHeight = 220;
+    const gap = 30;
+    const totalWidth = choices.length * cardWidth + (choices.length - 1) * gap;
+    const startX = (width - totalWidth) / 2;
+
+    choices.forEach((choice, index) => {
+      const x = startX + index * (cardWidth + gap);
+      const y = 220;
+      const card = this.add.rectangle(x, y, cardWidth, cardHeight, 0x111827, 0.95);
+      card.setOrigin(0, 0);
+      card.setStrokeStyle(2, 0x38bdf8, 0.7);
+
+      const name = this.add.text(x + 16, y + 16, choice.name, {
+        fontSize: '18px',
+        color: '#f8fafc',
+        fontStyle: 'bold',
+      });
+      const role = this.add.text(x + 16, y + 46, choice.role, {
+        fontSize: '14px',
+        color: '#38bdf8',
+      });
+      const temperament = this.add.text(x + 16, y + 70, `Temperament: ${choice.temperament}`, {
+        fontSize: '12px',
+        color: '#cbd5f5',
+      });
+      const traitText = Array.isArray(choice.traits) && choice.traits.length > 0
+        ? `Traits: ${choice.traits.join(', ')}`
+        : 'Traits: None';
+      const traits = this.add.text(x + 16, y + 94, traitText, {
+        fontSize: '12px',
+        color: '#94a3b8',
+        wordWrap: { width: cardWidth - 32 },
+      });
+
+      const addToPackAvailable = this.state.activePackIds.length < this.state.packSizeCap;
+      const recruitButton = this.add.rectangle(x + 16, y + 150, cardWidth - 32, 28, 0x38bdf8, 0.9);
+      recruitButton.setOrigin(0, 0);
+      recruitButton.setInteractive({ useHandCursor: true });
+      recruitButton.on('pointerdown', () => this.recruitDraftHyena(choice, false));
+      const recruitText = this.add.text(x + cardWidth / 2, y + 164, 'Recruit', {
+        fontSize: '13px',
+        color: '#0f172a',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+
+      this.draftContent.add([card, name, role, temperament, traits, recruitButton, recruitText]);
+
+      if (addToPackAvailable) {
+        const packButton = this.add.rectangle(x + 16, y + 184, cardWidth - 32, 28, 0xfbbf24, 0.9);
+        packButton.setOrigin(0, 0);
+        packButton.setInteractive({ useHandCursor: true });
+        packButton.on('pointerdown', () => this.recruitDraftHyena(choice, true));
+        const packText = this.add.text(x + cardWidth / 2, y + 198, 'Recruit + Add to Pack', {
+          fontSize: '12px',
+          color: '#0f172a',
+          fontStyle: 'bold',
+        }).setOrigin(0.5);
+        this.draftContent.add([packButton, packText]);
+      }
+    });
+  }
+
   handleStableInteract() {
-    setPanelOpen('pack', true);
+    this.openStableView();
   }
 
   handleHouseRest() {
@@ -772,6 +1312,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateDistrictBackground(districtConfig);
     this.createLocations(districtConfig.dayLocations);
     this.createStructures(districtConfig.campStructures);
+    this.createCampNpcs(districtConfig.campNpcs);
     this.setupGateways(districtConfig.gateways);
     this.player.setPosition(gateway.spawnX, gateway.spawnY);
     this.lastPosition = { x: gateway.spawnX, y: gateway.spawnY };
@@ -823,32 +1364,6 @@ export default class GameScene extends Phaser.Scene {
         contactId: locationKey,
         factionId: contactData?.factionId,
       });
-      if (this.domHud) {
-        this.domHud.hideFeedPanel();
-      }
-      this.updateHud();
-    }
-  }
-
-  handleFeed(feedPlan) {
-    if (feedHyenas(this.state, feedPlan)) {
-      feedPlan.forEach((entry) => {
-        const total = (entry.scraps || 0) + (entry.fatty || 0);
-        if (total <= 0) {
-          return;
-        }
-        const hyena = this.state.pack.find((member) => member.id === entry.id);
-        const name = hyena ? hyena.name : 'Hyena';
-        addEvent(
-          this.state,
-          `Fed ${name} (${entry.scraps || 0} scraps, ${entry.fatty || 0} fatty).`
-        );
-      });
-      if (this.domHud) {
-        this.domHud.hideFeedPanel();
-        this.domHud.playFeedAnimations(feedPlan);
-      }
-      applyFactionInfluence(this.state, 'feed');
       this.updateHud();
     }
   }
@@ -878,13 +1393,11 @@ export default class GameScene extends Phaser.Scene {
     addEvent(this.state, 'Night falls over Jugol’s Rest.');
     applyFactionInfluence(this.state, 'start_night');
     saveGameState(this.state);
-    if (this.domHud) {
-      this.domHud.hideFeedPanel();
-    }
     this.playPhaseTransition(previousPhase, this.state.phase);
     this.syncPoiMarkers(true);
     this.handleNarrativePhaseStart();
     this.updateHud();
+    this.refreshDraftOverlay();
   }
 
   handleClearOvergrowth() {
@@ -967,15 +1480,6 @@ export default class GameScene extends Phaser.Scene {
     this.syncPoiMarkers(true);
     this.handleNarrativePhaseStart();
     this.updateHud();
-  }
-
-  toggleFeedPanel() {
-    if (this.state.phase !== 'DAY') {
-      return;
-    }
-    if (this.domHud) {
-      this.domHud.toggleFeedPanel(!this.domHud.isFeedPanelVisible());
-    }
   }
 
   resetTarget() {

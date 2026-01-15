@@ -16,11 +16,20 @@ import {
   getContactFactionEffect,
   getContactsByDistrict,
 } from '../world/contacts.js';
+import {
+  createDraftCandidates,
+  createHyena,
+  createStarterRoster,
+} from '../world/hyenas.js';
 
 const DAY_ACTIONS = 5;
 const BASE_INCOMING = 3;
 const BURST_INTERVAL = 3;
 const BURST_AMOUNT = 12;
+const BURST_PACK_GROWTH_INTERVAL = 2;
+const MAX_PACK_SIZE_CAP = 5;
+const STARTING_PACK_SIZE_CAP = 2;
+const STARTING_SUPPLIES_TIER = 1;
 const MAX_METER = 100;
 const POP_TARGET = 60;
 const SAVE_KEY = 'jugols-rest-save';
@@ -195,35 +204,50 @@ const getCampBehavior = (state) => {
   };
 };
 
-const createPack = () => ([
-  {
-    id: 'hyena-scout',
-    name: 'Kefa',
-    role: 'Scout',
-    temperament: 'Wary',
-    hunger: 45,
-    fedScraps: 0,
-    fedFatty: 0,
-  },
-  {
-    id: 'hyena-bruiser',
-    name: 'Asha',
-    role: 'Bruiser',
-    temperament: 'Fierce',
-    hunger: 50,
-    fedScraps: 0,
-    fedFatty: 0,
-  },
-  {
-    id: 'hyena-warden',
-    name: 'Rift',
-    role: 'Warden',
-    temperament: 'Calm',
-    hunger: 40,
-    fedScraps: 0,
-    fedFatty: 0,
-  },
-]);
+const getHyenaFedToday = (hyena) => ({
+  scraps: Math.max(0, hyena?.fedToday?.scraps || hyena?.fedScraps || 0),
+  fatty: Math.max(0, hyena?.fedToday?.fatty || hyena?.fedFatty || 0),
+});
+
+const normalizeHyena = (data, fallback) => {
+  if (!data) {
+    return fallback;
+  }
+  return createHyena({
+    id: data.id || fallback?.id,
+    name: data.name || fallback?.name,
+    role: data.role || fallback?.role,
+    temperament: data.temperament || fallback?.temperament,
+    hunger: typeof data.hunger === 'number' ? clampMeter(data.hunger) : fallback?.hunger,
+    traits: Array.isArray(data.traits) ? data.traits : fallback?.traits,
+    baseStats: data.baseStats || fallback?.baseStats,
+    fedToday: getHyenaFedToday(data),
+  });
+};
+
+const normalizeHyenaRoster = (rosterData) => {
+  const fallback = createStarterRoster();
+  if (!Array.isArray(rosterData) || rosterData.length === 0) {
+    return fallback;
+  }
+  return rosterData.map((entry, index) =>
+    normalizeHyena(entry, fallback[index] || fallback[0])
+  );
+};
+
+export const getActivePack = (state) => {
+  const roster = Array.isArray(state.hyenaRoster) ? state.hyenaRoster : [];
+  const ids = Array.isArray(state.activePackIds) ? state.activePackIds : [];
+  const rosterMap = new Map(roster.map((hyena) => [hyena.id, hyena]));
+  return ids
+    .map((id) => rosterMap.get(id))
+    .filter(Boolean)
+    .slice(0, state.packSizeCap || STARTING_PACK_SIZE_CAP);
+};
+
+export const syncActivePack = (state) => {
+  state.pack = getActivePack(state);
+};
 
 const POI_RADIUS = 60;
 const POI_TYPES = ['OVERGROWTH', 'RUCKUS', 'ROUTE', 'LOT', 'SHRINE'];
@@ -354,26 +378,25 @@ const getRuckusSeverity = (tension) => {
   return 1;
 };
 
-const normalizePack = (packData) => {
-  if (!Array.isArray(packData) || packData.length === 0) {
-    return createPack();
+const normalizeActivePackIds = (activePackIds, roster, packSizeCap) => {
+  const rosterIds = new Set(roster.map((hyena) => hyena.id));
+  const filtered = Array.isArray(activePackIds)
+    ? activePackIds.filter((id) => rosterIds.has(id))
+    : [];
+  if (filtered.length > 0) {
+    return filtered.slice(0, packSizeCap);
   }
-  const defaults = createPack();
-  return defaults.map((base) => {
-    const existing = packData.find((entry) => entry.id === base.id) || {};
-    return {
-      ...base,
-      ...existing,
-      fedScraps: existing.fedScraps ?? base.fedScraps,
-      fedFatty: existing.fedFatty ?? base.fedFatty,
-      hunger: typeof existing.hunger === 'number' ? clampMeter(existing.hunger) : base.hunger,
-    };
-  });
+  return roster.slice(0, packSizeCap).map((hyena) => hyena.id);
 };
 
 export const getHyenaContribution = (hyena) => {
-  const stamina = (SCRAPS_STAMINA_BY_ROLE[hyena.role] || 0) * (hyena.fedScraps || 0);
-  const power = (FATTY_POWER_BY_ROLE[hyena.role] || 0) * (hyena.fedFatty || 0);
+  const fedToday = getHyenaFedToday(hyena);
+  const stamina =
+    (SCRAPS_STAMINA_BY_ROLE[hyena.role] || 0) * fedToday.scraps +
+    (hyena.baseStats?.staminaBonus || 0);
+  const power =
+    (FATTY_POWER_BY_ROLE[hyena.role] || 0) * fedToday.fatty +
+    (hyena.baseStats?.powerBonus || 0);
   return { stamina, power };
 };
 
@@ -404,13 +427,24 @@ export const packRules = {
   PACK_BASE_POWER,
 };
 
-export const createInitialState = () => ({
+export const createInitialState = () => {
+  const hyenaRoster = createStarterRoster();
+  const packSizeCap = STARTING_PACK_SIZE_CAP;
+  const activePackIds = hyenaRoster.slice(0, packSizeCap).map((hyena) => hyena.id);
+  return {
   dayNumber: 1,
   phase: 'DAY',
   dayActionsRemaining: DAY_ACTIONS,
   foodScraps: 0,
   foodFatty: 0,
-  pack: createPack(),
+  hyenaRoster,
+  activePackIds,
+  packSizeCap,
+  suppliesTier: STARTING_SUPPLIES_TIER,
+  burstCount: 0,
+  draftActive: false,
+  draftChoices: [],
+  pack: activePackIds.map((id) => hyenaRoster.find((hyena) => hyena.id === id)).filter(Boolean),
   packStamina: 0,
   packPower: 0,
   tension: 10,
@@ -445,7 +479,8 @@ export const createInitialState = () => ({
   victory: false,
   gameOver: false,
   eventLog: [],
-});
+  };
+};
 
 export const addEvent = (state, message) => {
   if (!state.eventLog) {
@@ -483,11 +518,28 @@ export const loadGameState = () => {
     const base = createInitialState();
     const data = JSON.parse(raw);
     const resolvedDistrictId = getDistrictConfig(data.currentDistrictId).id;
+    const roster = normalizeHyenaRoster(data.hyenaRoster || data.pack);
+    const packSizeCap = Math.min(
+      MAX_PACK_SIZE_CAP,
+      Math.max(1, clampPositive(data.packSizeCap) || STARTING_PACK_SIZE_CAP)
+    );
+    const activePackIds = normalizeActivePackIds(data.activePackIds, roster, packSizeCap);
     const merged = {
       ...base,
       ...data,
       currentDistrictId: resolvedDistrictId,
-      pack: normalizePack(data.pack),
+      hyenaRoster: roster,
+      activePackIds,
+      packSizeCap,
+      suppliesTier: clampPositive(data.suppliesTier) || STARTING_SUPPLIES_TIER,
+      burstCount: clampPositive(data.burstCount),
+      draftActive: Boolean(data.draftActive),
+      draftChoices: Array.isArray(data.draftChoices)
+        ? data.draftChoices.map((entry) => normalizeHyena(entry, entry))
+        : [],
+      pack: activePackIds
+        .map((id) => roster.find((hyena) => hyena.id === id))
+        .filter(Boolean),
       factions: normalizeFactionStates(data.factions),
       dayCollectedByDistrict: {
         ...base.dayCollectedByDistrict,
@@ -716,6 +768,7 @@ export const startDay = (state, { advanceDay }) => {
 
   state.phase = 'DAY';
   state.dayActionsRemaining = DAY_ACTIONS;
+  syncActivePack(state);
   spawnPoisForDay(state);
   spawnShrineForDay(state, getDistrictConfig(state.currentDistrictId));
   state.dayCollectedByDistrict = createDistrictCollections();
@@ -767,6 +820,23 @@ export const startDay = (state, { advanceDay }) => {
     state.campPressure = clampMeter(state.campPressure - 10);
   }
 
+  const isBurstDay = state.dayNumber % BURST_INTERVAL === 0;
+  if (isBurstDay) {
+    state.burstCount = clampPositive(state.burstCount) + 1;
+    const shouldGrowPack = state.burstCount % BURST_PACK_GROWTH_INTERVAL === 0;
+    if (shouldGrowPack && state.packSizeCap < MAX_PACK_SIZE_CAP) {
+      state.packSizeCap = Math.min(MAX_PACK_SIZE_CAP, state.packSizeCap + 1);
+      state.suppliesTier = Math.max(STARTING_SUPPLIES_TIER, state.suppliesTier + 1);
+      addEvent(state, 'Stable expansion: Pack cap +1. Supplies tier improved.');
+    }
+    state.draftActive = true;
+    state.draftChoices = createDraftCandidates(state, 3);
+    addEvent(state, 'Burst arrivals: new hyena draft available at the Stable.');
+  } else {
+    state.draftActive = false;
+    state.draftChoices = [];
+  }
+
   applyBlessingMorningTicks(state);
   pruneExpiredBlessings(state);
 
@@ -787,10 +857,12 @@ export const startDay = (state, { advanceDay }) => {
 export const startNight = (state) => {
   state.phase = 'NIGHT';
   pruneExpiredBlessings(state);
+  syncActivePack(state);
   const staminaBase = Math.max(0, PACK_BASE_STAMINA - state.hyenaStaminaBasePenalty);
   const totals = getPackTotals(state.pack);
+  const suppliesBonus = Math.max(0, state.suppliesTier || STARTING_SUPPLIES_TIER);
   const baseStats = {
-    stamina: Math.max(0, staminaBase + totals.stamina),
+    stamina: Math.max(0, staminaBase + totals.stamina + suppliesBonus),
     power: Math.max(0, PACK_BASE_POWER + totals.power),
   };
   const blessedStats = applyBlessingPackStats(state, baseStats);
@@ -812,10 +884,9 @@ export const endNight = (state) => {
     state.threatNightsActiveCount = 0;
   }
 
-  if (Array.isArray(state.pack)) {
-    state.pack.forEach((hyena) => {
-      hyena.fedScraps = 0;
-      hyena.fedFatty = 0;
+  if (Array.isArray(state.hyenaRoster)) {
+    state.hyenaRoster.forEach((hyena) => {
+      hyena.fedToday = { scraps: 0, fatty: 0 };
     });
   }
 
@@ -860,6 +931,7 @@ export const feedHyenas = (state, feedPlan) => {
   if (!Array.isArray(feedPlan) || feedPlan.length === 0) {
     return false;
   }
+  const activeIds = new Set(state.activePackIds || []);
   const totals = feedPlan.reduce(
     (sum, entry) => ({
       scraps: sum.scraps + Math.max(0, entry.scraps || 0),
@@ -874,7 +946,10 @@ export const feedHyenas = (state, feedPlan) => {
     return false;
   }
 
-  const packMap = new Map(state.pack.map((hyena) => [hyena.id, hyena]));
+  const roster = Array.isArray(state.hyenaRoster) ? state.hyenaRoster : [];
+  const packMap = new Map(
+    roster.filter((hyena) => activeIds.has(hyena.id)).map((hyena) => [hyena.id, hyena])
+  );
   feedPlan.forEach((entry) => {
     const hyena = packMap.get(entry.id);
     if (!hyena) {
@@ -882,8 +957,11 @@ export const feedHyenas = (state, feedPlan) => {
     }
     const scraps = Math.max(0, entry.scraps || 0);
     const fatty = Math.max(0, entry.fatty || 0);
-    hyena.fedScraps += scraps;
-    hyena.fedFatty += fatty;
+    const currentFed = getHyenaFedToday(hyena);
+    hyena.fedToday = {
+      scraps: currentFed.scraps + scraps,
+      fatty: currentFed.fatty + fatty,
+    };
     // Each unit of food both sates hunger and boosts tonight's role-based totals.
     const hungerDrop = (scraps + fatty) * HUNGER_REDUCTION_PER_FOOD;
     hyena.hunger = clampMeter(hyena.hunger - hungerDrop);
@@ -892,6 +970,7 @@ export const feedHyenas = (state, feedPlan) => {
   state.foodScraps -= totals.scraps;
   state.foodFatty -= totals.fatty;
   state.dayActionsRemaining -= 1;
+  syncActivePack(state);
   return true;
 };
 
