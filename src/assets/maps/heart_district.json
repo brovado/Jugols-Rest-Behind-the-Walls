@@ -310,9 +310,9 @@
  "tileheight":16,
  "tilesets":[
         {
-         "firstgid":1,
          "columns":57,
-         "image":"src/assets/images/roguelikeSheet_transparent.png",
+         "firstgid":1,
+         "image":"..\/..\/..\/Users\/Andre\/Downloads\/kenney_roguelike-rpg-pack\/Spritesheet\/roguelikeSheet_transparent.png",
          "imageheight":526,
          "imagewidth":968,
          "margin":0,
