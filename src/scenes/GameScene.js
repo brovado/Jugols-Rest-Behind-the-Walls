@@ -50,6 +50,11 @@ const WORLD_HEIGHT = 1200;
 const PLAYER_SPEED = 220;
 const CLICK_RADIUS = 10;
 const INTERACT_RADIUS = 80;
+const WARDEN_FLAG_BY_ID = {
+  warden_pack: 'packWardenSeen',
+  warden_city: 'cityWardenSeen',
+  warden_time: 'timeWardenSeen',
+};
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -79,6 +84,7 @@ export default class GameScene extends Phaser.Scene {
     this.isTransitioning = false;
     this.structureMarkers = [];
     this.campNpcMarkers = [];
+    this.campWardenById = new Map();
     this.currentInteractable = null;
     this.interactKey = null;
     this.stableOverlay = null;
@@ -89,6 +95,7 @@ export default class GameScene extends Phaser.Scene {
     this.draftOverlay = null;
     this.draftContent = null;
     this.draftOverlayOpen = false;
+    this.wardenLineCooldownUntil = 0;
   }
 
   create(data = {}) {
@@ -399,6 +406,7 @@ export default class GameScene extends Phaser.Scene {
       });
     }
     this.campNpcMarkers = [];
+    this.campWardenById = new Map();
     if (!Array.isArray(npcs)) {
       return;
     }
@@ -415,7 +423,11 @@ export default class GameScene extends Phaser.Scene {
         backgroundColor: 'rgba(15, 23, 42, 0.6)',
         padding: { x: 4, y: 2 },
       }).setOrigin(0.5);
-      this.campNpcMarkers.push({ marker, text });
+      const entry = { ...npc, marker, text };
+      this.campNpcMarkers.push(entry);
+      if (npc.id) {
+        this.campWardenById.set(npc.id, entry);
+      }
     });
   }
 
@@ -624,6 +636,82 @@ export default class GameScene extends Phaser.Scene {
     return loc?.contactId ? loc : null;
   }
 
+  getOnboardingFlags() {
+    if (!this.state.onboardingFlags || typeof this.state.onboardingFlags !== 'object') {
+      this.state.onboardingFlags = {
+        packWardenSeen: false,
+        cityWardenSeen: false,
+        timeWardenSeen: false,
+      };
+    }
+    return this.state.onboardingFlags;
+  }
+
+  getWardenTriggerDistance(wardenId, structureId) {
+    const distances = [];
+    const warden = this.campWardenById?.get(wardenId);
+    if (warden && typeof warden.x === 'number' && typeof warden.y === 'number') {
+      const distance = Phaser.Math.Distance.Between(
+        this.player.x,
+        this.player.y,
+        warden.x,
+        warden.y
+      );
+      if (distance <= INTERACT_RADIUS) {
+        distances.push(distance);
+      }
+    }
+    if (structureId && Array.isArray(this.structureMarkers)) {
+      const structure = this.structureMarkers.find((entry) => entry.id === structureId);
+      if (structure && typeof structure.x === 'number' && typeof structure.y === 'number') {
+        const distance = Phaser.Math.Distance.Between(
+          this.player.x,
+          this.player.y,
+          structure.x,
+          structure.y
+        );
+        if (distance <= (structure.radius || INTERACT_RADIUS)) {
+          distances.push(distance);
+        }
+      }
+    }
+    if (distances.length === 0) {
+      return null;
+    }
+    return Math.min(...distances);
+  }
+
+  getWardenLine(warden) {
+    if (!warden) {
+      return '';
+    }
+    if (warden.id === 'warden_city' && this.state.campPop > 0 && warden.campLine) {
+      return warden.campLine;
+    }
+    return warden.introLine || '';
+  }
+
+  triggerWardenLine(wardenId) {
+    const flagKey = WARDEN_FLAG_BY_ID[wardenId];
+    if (!flagKey) {
+      return false;
+    }
+    const flags = this.getOnboardingFlags();
+    if (flags[flagKey]) {
+      return false;
+    }
+    const warden = this.campWardenById?.get(wardenId);
+    const line = this.getWardenLine(warden);
+    if (!line) {
+      return false;
+    }
+    this.domHud?.showWardenLine(line, 2500);
+    this.wardenLineCooldownUntil = window.performance.now() + 2600;
+    flags[flagKey] = true;
+    saveGameState(this.state);
+    return true;
+  }
+
   getNearestInteractable(context) {
     if (!this.player) {
       return null;
@@ -633,8 +721,42 @@ export default class GameScene extends Phaser.Scene {
       if (!candidate) {
         return;
       }
-      candidates.push(candidate);
+      candidates.push({
+        priority: candidate.priority ?? 1,
+        ...candidate,
+      });
     };
+
+    if (this.currentDistrict?.id === 'camp') {
+      const flags = this.getOnboardingFlags();
+      const addWardenCandidate = (wardenId, structureId) => {
+        const flagKey = WARDEN_FLAG_BY_ID[wardenId];
+        if (!flagKey || flags[flagKey]) {
+          return;
+        }
+        const distance = this.getWardenTriggerDistance(wardenId, structureId);
+        if (distance === null) {
+          return;
+        }
+        const warden = this.campWardenById?.get(wardenId);
+        const label = warden?.label || 'Warden';
+        addCandidate({
+          distance,
+          text: `[F] Speak with ${label}`,
+          reason: '',
+          canInteract: true,
+          priority: 0,
+          interactable: {
+            onInteract: () => this.triggerWardenLine(wardenId),
+            canInteract: true,
+          },
+        });
+      };
+
+      addWardenCandidate('warden_pack', 'stable');
+      addWardenCandidate('warden_time', 'house');
+      addWardenCandidate('warden_city');
+    }
 
     if (this.state.phase === 'DAY' && Array.isArray(this.locations)) {
       const collected =
@@ -754,7 +876,13 @@ export default class GameScene extends Phaser.Scene {
     if (candidates.length === 0) {
       return null;
     }
-    candidates.sort((a, b) => a.distance - b.distance);
+    candidates.sort((a, b) => {
+      const priorityDelta = (a.priority ?? 1) - (b.priority ?? 1);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      return a.distance - b.distance;
+    });
     return candidates[0];
   }
 
@@ -1293,8 +1421,16 @@ export default class GameScene extends Phaser.Scene {
     if (this.isTransitioning || this.inputLocked) {
       return;
     }
+    if (this.wardenLineCooldownUntil && window.performance.now() < this.wardenLineCooldownUntil) {
+      return;
+    }
     if (!gateway || gateway.toDistrictId === this.state.currentDistrictId) {
       return;
+    }
+    if (this.currentDistrict?.id === 'camp' && !this.getOnboardingFlags().cityWardenSeen) {
+      if (this.triggerWardenLine('warden_city')) {
+        return;
+      }
     }
     this.transitionToDistrict(gateway);
   }

@@ -35,9 +35,31 @@ export const DISTRICTS = {
       },
     ],
     campNpcs: [
-      { x: 360, y: 720, label: 'Warden', color: 0x94a3b8 },
-      { x: 520, y: 700, label: 'Warden', color: 0x94a3b8 },
-      { x: 600, y: 760, label: 'Warden', color: 0x94a3b8 },
+      {
+        id: 'warden_pack',
+        label: 'Warden of the Pack',
+        introLine: 'They won’t walk the night unless they’re fed.',
+        x: 360,
+        y: 720,
+        color: 0x94a3b8,
+      },
+      {
+        id: 'warden_time',
+        label: 'Warden of the Clock',
+        introLine: 'We don’t move the sun. We decide when to follow it.',
+        x: 700,
+        y: 620,
+        color: 0x94a3b8,
+      },
+      {
+        id: 'warden_city',
+        label: 'Warden of the City',
+        introLine: 'Inside the walls, things grow when left alone.',
+        campLine: 'Too many tents. Not enough roofs.',
+        x: 1560,
+        y: 600,
+        color: 0x94a3b8,
+      },
     ],
     gateways: [
       {
