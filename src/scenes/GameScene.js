@@ -102,6 +102,15 @@ export default class GameScene extends Phaser.Scene {
     this.wardenLineCooldownUntil = 0;
   }
 
+  preload() {
+    if (!this.cache.tilemap.exists('camp')) {
+      this.load.tilemapTiledJSON('camp', 'src/assets/maps/camp.json');
+    }
+    if (!this.textures.exists('tile6Image')) {
+      this.load.image('tile6Image', 'src/assets/images/roguelikeSheet_transparent.png');
+    }
+  }
+
   create(data = {}) {
     if (data.loadSave) {
       this.state = loadGameState();
@@ -166,30 +175,19 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    const mapData = this.cache.tilemap.get(mapKey)?.data;
-    if (!mapData || !Array.isArray(mapData.tilesets)) {
-      return;
-    }
-    mapData.tilesets.forEach((tileset, idx) => {
-      const imageLabel = tileset?.image ? tileset.image : '(no image field)';
-      console.log(
-        `Tilemap tileset ${idx}: ${imageLabel} (name: ${tileset?.name ?? 'unknown'}, firstgid: ${tileset?.firstgid ?? 'unknown'})`,
-      );
-    });
-    if (mapData.tilesets.some((tileset) => tileset?.source)) {
-      console.log('External tilesets unsupported. Embed tileset in Tiled and re-export JSON.');
-      return;
-    }
-
-    const map = this.make.tilemap({ key: mapKey });
-    const tileset = map.addTilesetImage('tile6', 'roguelikeSheet');
+    const map = this.make.tilemap({ key: mapKey === 'camp' ? 'camp' : mapKey });
+    const tileset = map.addTilesetImage('tile6', 'tile6Image');
     if (!tileset) {
       return;
     }
 
     const groundLayer = map.createLayer('Ground', tileset, 0, 0);
     const wallsLayer = map.createLayer('Walls', tileset, 0, 0);
+    const objectsLayer = map.createLayer('Objects', tileset, 0, 0);
     const overlayLayer = map.createLayer('Overlays', tileset, 0, 0);
+
+    const layerNames = map.layers.map((layer) => layer.name);
+    console.log('Tilemap loaded', { mapKey, layers: layerNames, tileset: tileset.name });
 
     if (groundLayer) {
       groundLayer.setDepth(0);
@@ -198,12 +196,20 @@ export default class GameScene extends Phaser.Scene {
       wallsLayer.setDepth(5);
       wallsLayer.setCollisionByExclusion([-1]);
     }
+    if (objectsLayer) {
+      objectsLayer.setDepth(8);
+    }
     if (overlayLayer) {
       overlayLayer.setDepth(15);
     }
 
     this.map = map;
-    this.mapLayers = { ground: groundLayer, walls: wallsLayer, overlays: overlayLayer };
+    this.mapLayers = {
+      ground: groundLayer,
+      walls: wallsLayer,
+      objects: objectsLayer,
+      overlays: overlayLayer,
+    };
     this.worldBounds = { width: map.widthInPixels, height: map.heightInPixels };
     const spawn = this.getPlayerSpawnFromMap(map);
     if (!spawn) {

@@ -13,7 +13,7 @@ export default class BootScene extends Phaser.Scene {
       margin: 1,
     });
     this.load.image('roguelikeSheet', 'src/assets/images/roguelikeSheet_transparent.png');
-    this.load.tilemapTiledJSON('camp', 'src/assets/maps/camp.tmj');
+    this.load.tilemapTiledJSON('camp', 'src/assets/maps/camp.json');
     this.load.tilemapTiledJSON('heart_district', 'src/assets/maps/heart_district.json');
   }
 
