@@ -1057,14 +1057,18 @@ export default class GameScene extends Phaser.Scene {
       );
 
       const createAdjust = (x, label, onClick) => {
-        const rect = this.add.rectangle(x, feedRowY + 18, 20, 20, 0x38bdf8, 0.9);
-        rect.setOrigin(0, 0.5);
-        rect.setInteractive({ useHandCursor: true });
+        const size = 22;
+        const rect = this.add.rectangle(x, feedRowY + 8, size, size, 0x38bdf8, 0.9);
+        rect.setOrigin(0, 0);
+        rect.setInteractive(
+          new Phaser.Geom.Rectangle(0, 0, size, size),
+          Phaser.Geom.Rectangle.Contains
+        );
         rect.on('pointerdown', onClick);
-        const text = this.add.text(x + 6, feedRowY + 10, label, {
+        const text = this.add.text(x + size / 2, feedRowY + 8 + size / 2, label, {
           fontSize: '12px',
           color: '#0f172a',
-        }).setOrigin(0, 0.5);
+        }).setOrigin(0.5);
         this.stableContent.add([rect, text]);
       };
 
@@ -1110,22 +1114,35 @@ export default class GameScene extends Phaser.Scene {
   }
 
   refreshDraftOverlay() {
-    if (!this.state.draftActive) {
+    if (!this.state.draftPending) {
       if (this.draftOverlayOpen) {
         this.closeDraftOverlay();
       }
       return;
     }
     if (!this.draftOverlayOpen) {
+      this.ensureDraftCamp();
       this.openDraftOverlay();
     } else {
       this.renderDraftOverlay();
     }
   }
 
+  ensureDraftCamp() {
+    if (this.state.currentDistrictId === 'camp') {
+      return;
+    }
+    const campConfig = getDistrictConfig('camp');
+    const spawn = campConfig?.spawn || { x: 400, y: 500 };
+    this.applyDistrictTransition({ spawnX: spawn.x, spawnY: spawn.y }, campConfig);
+  }
+
   openDraftOverlay() {
     if (!this.draftOverlay) {
       return;
+    }
+    if (this.stableViewOpen) {
+      this.closeStableView();
     }
     this.draftOverlayOpen = true;
     this.draftOverlay.setVisible(true);
@@ -1133,6 +1150,7 @@ export default class GameScene extends Phaser.Scene {
     if (this.domHud) {
       this.domHud.setInteractionLocked(true);
     }
+    addEvent(this.state, 'Draft Phase triggered.');
     this.renderDraftOverlay();
   }
 
@@ -1159,6 +1177,7 @@ export default class GameScene extends Phaser.Scene {
       this.state.activePackIds.push(candidate.id);
     }
     syncActivePack(this.state);
+    this.state.draftPending = false;
     this.state.draftActive = false;
     this.state.draftChoices = [];
     addEvent(this.state, `Drafted ${candidate.name} (${candidate.role}).`);
@@ -1480,6 +1499,7 @@ export default class GameScene extends Phaser.Scene {
     this.syncPoiMarkers(true);
     this.handleNarrativePhaseStart();
     this.updateHud();
+    this.refreshDraftOverlay();
   }
 
   resetTarget() {
