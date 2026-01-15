@@ -22,7 +22,14 @@ import { initDomHud } from '../ui/domHud.js';
 import { setPanelActive } from '../ui/panelDock.js';
 import { moveToward } from '../utils/pathing.js';
 import { getAmbientLine } from '../world/ambient.js';
+import {
+  applyBlessingHousingReward,
+  createBlessingEntry,
+  formatBlessingEffect,
+  getBlessingActionCostModifier,
+} from '../world/blessings.js';
 import { getDistrictConfig } from '../world/districts.js';
+import { GOD_BY_ID } from '../world/gods.js';
 import {
   applyNarrativeEventEffects,
   getNarrativeEvent,
@@ -195,6 +202,7 @@ export default class GameScene extends Phaser.Scene {
       onGuardRoute: () => this.handleGuardRoute(),
       onSuppressThreat: () => this.handleSuppressThreat(),
       onSecureLot: () => this.handleSecureLot(),
+      onPrayAtShrine: () => this.handlePray(),
       onEndNight: () => this.handleEndNight(),
       onConfirmFeed: (feedPlan) => this.handleFeed(feedPlan),
     });
@@ -442,24 +450,38 @@ export default class GameScene extends Phaser.Scene {
 
   updateHud() {
     const activePois = this.getActivePois();
-    const nearest = this.getNearestPoi(activePois);
+    const shrinePois = activePois.filter((poi) => poi.type === 'SHRINE');
+    const patrolPois = activePois.filter((poi) => poi.type !== 'SHRINE');
+    const nearest = this.getNearestPoi(patrolPois);
     const nearestPoi = nearest?.poi || null;
     const nearestDistance = nearest?.distance ?? null;
     const nearestInRange =
       nearestPoi && typeof nearestDistance === 'number'
         ? nearestDistance <= (nearestPoi.radius || INTERACT_RADIUS)
         : false;
+    const nearestShrineResult = this.getNearestPoi(shrinePois);
+    const nearestShrine = nearestShrineResult?.poi || null;
+    const nearestShrineDistance = nearestShrineResult?.distance ?? null;
+    const nearestShrineInRange =
+      nearestShrine && typeof nearestShrineDistance === 'number'
+        ? nearestShrineDistance <= (nearestShrine.radius || INTERACT_RADIUS)
+        : false;
+    const shrineGod = nearestShrine ? GOD_BY_ID[nearestShrine.godId] : null;
     const context = {
       nearButcher: this.isNearLocation('butcher'),
       nearTavern: this.isNearLocation('tavern'),
       nearMarket: this.isNearLocation('market'),
-      activePois: activePois.map((poi) => ({
+      activePois: patrolPois.map((poi) => ({
         ...poi,
         distance: Phaser.Math.Distance.Between(this.player.x, this.player.y, poi.x, poi.y),
       })),
       nearestPoi,
       nearestPoiDistance: nearestDistance,
       nearestPoiInRange: nearestInRange,
+      nearestShrine,
+      nearestShrineDistance,
+      nearestShrineInRange,
+      shrineGod,
     };
     if (this.domHud) {
       this.domHud.update(this.state, context);
@@ -652,6 +674,53 @@ export default class GameScene extends Phaser.Scene {
     this.handlePoiAction('LOT');
   }
 
+  handlePray() {
+    const shrinePois = this.getActivePois().filter((poi) => poi.type === 'SHRINE');
+    const nearest = this.getNearestPoi(shrinePois);
+    if (!nearest) {
+      return;
+    }
+    const { poi, distance } = nearest;
+    if (distance > (poi.radius || INTERACT_RADIUS)) {
+      return;
+    }
+    if (poi.prayedToday) {
+      return;
+    }
+    const god = GOD_BY_ID[poi.godId];
+    if (!god) {
+      return;
+    }
+    const isNewDiscovery = !this.state.discoveredShrines?.[poi.godId];
+    poi.prayedToday = true;
+    poi.discovered = true;
+    if (!this.state.discoveredShrines) {
+      this.state.discoveredShrines = {};
+    }
+    this.state.discoveredShrines[poi.godId] = true;
+
+    const blessing = createBlessingEntry(this.state, god);
+    if (!Array.isArray(this.state.activeBlessings)) {
+      this.state.activeBlessings = [];
+    }
+    this.state.activeBlessings.push(blessing);
+
+    if (isNewDiscovery) {
+      addEvent(this.state, `Shrine discovered: ${god.name}.`);
+    }
+    addEvent(
+      this.state,
+      `Blessing received: ${god.name} — ${formatBlessingEffect(blessing)}.`
+    );
+
+    const resolved = resolvePoi(this.state, poi.id);
+    if (resolved) {
+      this.animatePoiResolution(resolved.id);
+    }
+    saveGameState(this.state);
+    this.updateHud();
+  }
+
   handleEndNight() {
     if (this.state.phase !== 'NIGHT') {
       return;
@@ -825,6 +894,22 @@ export default class GameScene extends Phaser.Scene {
     }, null);
   }
 
+  getPoiActionCost(type, poi) {
+    const modifier = getBlessingActionCostModifier(this.state);
+    switch (type) {
+      case 'OVERGROWTH':
+        return Math.max(1, 2 + (poi?.severity || 1) + modifier);
+      case 'ROUTE':
+        return Math.max(1, 2 + modifier);
+      case 'RUCKUS':
+        return Math.max(1, 3 + modifier);
+      case 'LOT':
+        return Math.max(1, 2 + modifier);
+      default:
+        return Math.max(1, 1 + modifier);
+    }
+  }
+
   handlePoiAction(type) {
     if (this.state.phase !== 'NIGHT') {
       return;
@@ -840,7 +925,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (type === 'OVERGROWTH') {
-      const cost = 2 + poi.severity;
+      const cost = this.getPoiActionCost(type, poi);
       if (this.state.packStamina < cost) {
         return;
       }
@@ -848,14 +933,15 @@ export default class GameScene extends Phaser.Scene {
       this.state.overgrowth = clampMeter(
         this.state.overgrowth - (15 + poi.severity * 5)
       );
-      this.state.housingCapacity += 1;
+      const housingReward = applyBlessingHousingReward(this.state, 1);
+      this.state.housingCapacity += housingReward;
       this.state.clearedOvergrowthTonight = true;
-      addEvent(this.state, 'Cleared overgrowth: Housing capacity +1.');
+      addEvent(this.state, `Cleared overgrowth: Housing capacity +${housingReward}.`);
       applyFactionInfluence(this.state, 'clear_overgrowth', { poiSeverity: poi.severity });
     }
 
     if (type === 'ROUTE') {
-      const cost = 2;
+      const cost = this.getPoiActionCost(type, poi);
       if (this.state.packStamina < cost) {
         return;
       }
@@ -866,7 +952,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (type === 'RUCKUS') {
-      const cost = 3;
+      const cost = this.getPoiActionCost(type, poi);
       if (this.state.packStamina < cost || this.state.packPower < 2) {
         return;
       }
@@ -880,14 +966,15 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (type === 'LOT') {
-      const cost = 2;
+      const cost = this.getPoiActionCost(type, poi);
       if (this.state.packStamina < cost) {
         return;
       }
       this.state.packStamina -= cost;
-      this.state.housingCapacity += 2;
+      const housingReward = applyBlessingHousingReward(this.state, 2);
+      this.state.housingCapacity += housingReward;
       this.state.campPressure = clampMeter(this.state.campPressure - 10);
-      addEvent(this.state, 'Secured a lot: Housing capacity +2.');
+      addEvent(this.state, `Secured a lot: Housing capacity +${housingReward}.`);
       applyFactionInfluence(this.state, 'secure_lot', { poiSeverity: poi.severity });
     }
 
@@ -944,8 +1031,9 @@ export default class GameScene extends Phaser.Scene {
     const ring = this.add.circle(0, 0, poi.radius || 60, color, 0.1);
     ring.setStrokeStyle(2, color, 0.8);
 
+    const labelText = poi.type === 'SHRINE' ? label : `${label} ${poi.severity}`;
     const text = this.add
-      .text(0, -(poi.radius || 60) - 14, `${label} ${poi.severity}`, {
+      .text(0, -(poi.radius || 60) - 14, labelText, {
         fontSize: '12px',
         color: '#f8fafc',
         backgroundColor: 'rgba(15, 23, 42, 0.6)',
@@ -1002,6 +1090,8 @@ export default class GameScene extends Phaser.Scene {
         return { color: 0x38bdf8, label: 'RT' };
       case 'LOT':
         return { color: 0xa855f7, label: 'L' };
+      case 'SHRINE':
+        return { color: 0xfacc15, label: 'Shrine' };
       default:
         return { color: 0x94a3b8, label: '?' };
     }

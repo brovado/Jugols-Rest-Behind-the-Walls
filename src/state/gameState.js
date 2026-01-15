@@ -5,6 +5,12 @@ import {
   FACTIONS,
 } from '../world/factions.js';
 import { DISTRICTS, getDistrictConfig } from '../world/districts.js';
+import { GODS } from '../world/gods.js';
+import {
+  applyBlessingMorningTicks,
+  applyBlessingPackStats,
+  pruneExpiredBlessings,
+} from '../world/blessings.js';
 
 const DAY_ACTIONS = 5;
 const BASE_INCOMING = 3;
@@ -215,7 +221,7 @@ const createPack = () => ([
 ]);
 
 const POI_RADIUS = 60;
-const POI_TYPES = ['OVERGROWTH', 'RUCKUS', 'ROUTE', 'LOT'];
+const POI_TYPES = ['OVERGROWTH', 'RUCKUS', 'ROUTE', 'LOT', 'SHRINE'];
 
 const getNightPoiPoints = (districtConfig) =>
   districtConfig?.spawnAnchors || getDistrictConfig('heart').spawnAnchors;
@@ -235,6 +241,18 @@ const createDistrictPois = () =>
     acc[id] = [];
     return acc;
   }, {});
+
+const getActiveShrines = (state, districtId) => {
+  const pois = ensureDistrictPois(state, districtId);
+  return pois.filter((poi) => poi.type === 'SHRINE' && !poi.resolved);
+};
+
+const normalizeShrinePoi = (state, poi) => ({
+  ...poi,
+  type: 'SHRINE',
+  discovered: Boolean(state.discoveredShrines?.[poi.godId]),
+  prayedToday: Boolean(poi.prayedToday),
+});
 
 const ensureDistrictCollections = (state, districtId) => {
   if (!state.dayCollectedByDistrict) {
@@ -270,6 +288,18 @@ const createPoi = (state, type, point, index, severity) => ({
   resolved: false,
 });
 
+const createShrinePoi = (state, godId, point, districtId) => ({
+  id: `shrine-${state.dayNumber}-${districtId}-${godId}`,
+  type: 'SHRINE',
+  x: point.x,
+  y: point.y,
+  radius: POI_RADIUS + 10,
+  resolved: false,
+  godId,
+  discovered: Boolean(state.discoveredShrines?.[godId]),
+  prayedToday: false,
+});
+
 const pickPoints = (points, count, seed) => {
   if (!Array.isArray(points) || points.length === 0 || count <= 0) {
     return [];
@@ -278,6 +308,23 @@ const pickPoints = (points, count, seed) => {
   return Array.from({ length: Math.min(count, points.length) }, (_, idx) =>
     points[(start + idx) % points.length]
   );
+};
+
+const pickShrineGodId = (state, districtId) => {
+  if (!Array.isArray(GODS) || GODS.length === 0) {
+    return null;
+  }
+  const preferred = GODS.filter((god) => god.districtAffinity === districtId);
+  const flexible = GODS.filter((god) => god.districtAffinity === 'any');
+  const pool = preferred.length > 0 ? [...preferred, ...flexible] : GODS;
+  const recent = new Set(state.lastShrineGodIds || []);
+  const filtered = pool.filter((god) => !recent.has(god.id));
+  const selectionPool = filtered.length > 0 ? filtered : pool;
+  const seed =
+    state.dayNumber * 31 +
+    districtId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const index = Math.abs(seed) % selectionPool.length;
+  return selectionPool[index]?.id || selectionPool[0]?.id || null;
 };
 
 const getOvergrowthCount = (overgrowth) => {
@@ -395,6 +442,9 @@ export const createInitialState = () => ({
   narrativeFlags: {},
   lastNarrativeEventDay: 0,
   lastAmbientLineKey: '',
+  discoveredShrines: {},
+  activeBlessings: [],
+  lastShrineGodIds: [],
   victory: false,
   gameOver: false,
   eventLog: [],
@@ -450,6 +500,12 @@ export const loadGameState = () => {
         ...base.activePoisByDistrict,
         ...(data.activePoisByDistrict || {}),
       },
+      discoveredShrines:
+        data.discoveredShrines && typeof data.discoveredShrines === 'object'
+          ? data.discoveredShrines
+          : {},
+      activeBlessings: Array.isArray(data.activeBlessings) ? data.activeBlessings : [],
+      lastShrineGodIds: Array.isArray(data.lastShrineGodIds) ? data.lastShrineGodIds : [],
       eventLog: Array.isArray(data.eventLog) ? data.eventLog : [],
       worldFactions: base.worldFactions,
     };
@@ -469,13 +525,17 @@ export const loadGameState = () => {
       };
       const storedPois = merged.activePoisByDistrict[districtId];
       merged.activePoisByDistrict[districtId] = Array.isArray(storedPois)
-        ? storedPois.filter((poi) => POI_TYPES.includes(poi.type))
+        ? storedPois
+          .filter((poi) => POI_TYPES.includes(poi.type))
+          .map((poi) =>
+            poi.type === 'SHRINE' ? normalizeShrinePoi(merged, poi) : poi
+          )
         : [];
     });
     if (!data.activePoisByDistrict && Array.isArray(data.activePois)) {
-      merged.activePoisByDistrict[resolvedDistrictId] = data.activePois.filter((poi) =>
-        POI_TYPES.includes(poi.type)
-      );
+      merged.activePoisByDistrict[resolvedDistrictId] = data.activePois
+        .filter((poi) => POI_TYPES.includes(poi.type))
+        .map((poi) => (poi.type === 'SHRINE' ? normalizeShrinePoi(merged, poi) : poi));
     }
     merged.housedPop = Math.max(0, merged.housedPop || 0);
     merged.campPop = Math.max(0, merged.campPop || 0);
@@ -504,8 +564,49 @@ export const loadGameState = () => {
 };
 
 export const spawnPoisForDay = (state) => {
-  state.activePoisByDistrict = createDistrictPois();
+  const existing = state.activePoisByDistrict || createDistrictPois();
+  Object.keys(DISTRICTS).forEach((districtId) => {
+    const preservedShrines = Array.isArray(existing[districtId])
+      ? existing[districtId].filter((poi) => poi.type === 'SHRINE' && !poi.resolved)
+      : [];
+    preservedShrines.forEach((poi) => {
+      poi.prayedToday = false;
+    });
+    existing[districtId] = preservedShrines;
+  });
+  state.activePoisByDistrict = existing;
   return ensureDistrictPois(state, state.currentDistrictId);
+};
+
+export const spawnShrineForDay = (state, districtConfig) => {
+  const districtId = districtConfig?.id || state.currentDistrictId;
+  const activeShrines = getActiveShrines(state, districtId);
+  if (activeShrines.length > 0) {
+    return activeShrines;
+  }
+
+  const anchors = districtConfig?.shrineAnchors || getDistrictConfig('heart').shrineAnchors || [];
+  const anchor = pickPoints(
+    anchors,
+    1,
+    state.dayNumber * 13 + districtId.length
+  )[0];
+  if (!anchor) {
+    return activeShrines;
+  }
+  const godId = pickShrineGodId(state, districtId);
+  if (!godId) {
+    return activeShrines;
+  }
+  const shrine = createShrinePoi(state, godId, anchor, districtId);
+  const targetList = ensureDistrictPois(state, districtId);
+  targetList.push(shrine);
+  if (!Array.isArray(state.lastShrineGodIds)) {
+    state.lastShrineGodIds = [];
+  }
+  state.lastShrineGodIds.unshift(godId);
+  state.lastShrineGodIds = state.lastShrineGodIds.slice(0, 3);
+  return [shrine];
 };
 
 export const spawnPoisForNight = (state, districtConfig) => {
@@ -514,6 +615,7 @@ export const spawnPoisForNight = (state, districtConfig) => {
     districtConfig || getDistrictConfig(state.currentDistrictId)
   );
   const nextPois = [];
+  const preservedShrines = getActiveShrines(state, districtId);
   const routeSeed = state.dayNumber * 3;
   const routePoint = pickPoints(anchors.ROUTE, 1, routeSeed)[0];
   if (routePoint) {
@@ -568,7 +670,7 @@ export const spawnPoisForNight = (state, districtConfig) => {
   }
 
   state.activePoisByDistrict = state.activePoisByDistrict || createDistrictPois();
-  state.activePoisByDistrict[districtId] = nextPois;
+  state.activePoisByDistrict[districtId] = [...preservedShrines, ...nextPois];
   return state.activePoisByDistrict[districtId];
 };
 
@@ -593,12 +695,15 @@ export const hasSavedGame = () => {
 export const startDay = (state, { advanceDay }) => {
   if (advanceDay) {
     state.dayNumber += 1;
+    state.activePoisByDistrict = createDistrictPois();
   }
 
   state.phase = 'DAY';
   state.dayActionsRemaining = DAY_ACTIONS;
   spawnPoisForDay(state);
+  spawnShrineForDay(state, getDistrictConfig(state.currentDistrictId));
   state.dayCollectedByDistrict = createDistrictCollections();
+  pruneExpiredBlessings(state, { allowCycleGrace: true });
 
   const baselineTension = state.routeGuardedTonight ? 0 : 5;
   state.tension = clampMeter(state.tension + baselineTension);
@@ -646,6 +751,9 @@ export const startDay = (state, { advanceDay }) => {
     state.campPressure = clampMeter(state.campPressure - 10);
   }
 
+  applyBlessingMorningTicks(state);
+  pruneExpiredBlessings(state);
+
   state.incomingGroupsNextDay = createIncomingGroupsForDay(state.dayNumber + 1);
   const forecastTotal = getIncomingTotal(state.incomingGroupsNextDay);
   const forecastFactions = state.incomingGroupsNextDay
@@ -662,10 +770,16 @@ export const startDay = (state, { advanceDay }) => {
 
 export const startNight = (state) => {
   state.phase = 'NIGHT';
+  pruneExpiredBlessings(state);
   const staminaBase = Math.max(0, PACK_BASE_STAMINA - state.hyenaStaminaBasePenalty);
   const totals = getPackTotals(state.pack);
-  state.packStamina = Math.max(0, staminaBase + totals.stamina);
-  state.packPower = Math.max(0, PACK_BASE_POWER + totals.power);
+  const baseStats = {
+    stamina: Math.max(0, staminaBase + totals.stamina),
+    power: Math.max(0, PACK_BASE_POWER + totals.power),
+  };
+  const blessedStats = applyBlessingPackStats(state, baseStats);
+  state.packStamina = blessedStats.stamina;
+  state.packPower = blessedStats.power;
   state.routeGuardedTonight = false;
   state.housingBoostedTonight = false;
   state.clearedOvergrowthTonight = false;
