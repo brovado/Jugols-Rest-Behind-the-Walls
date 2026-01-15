@@ -11,6 +11,8 @@ import {
   spawnPoisForNight,
   resolvePoi,
   addEvent,
+  addNarrativeEvent,
+  getDominantCampFaction,
   saveGameState,
   loadGameState,
 } from '../state/gameState.js';
@@ -19,7 +21,13 @@ import { getDomUI } from '../ui/domUI.js';
 import { initDomHud } from '../ui/domHud.js';
 import { setPanelActive } from '../ui/panelDock.js';
 import { moveToward } from '../utils/pathing.js';
+import { getAmbientLine } from '../world/ambient.js';
 import { getDistrictConfig } from '../world/districts.js';
+import {
+  applyNarrativeEventEffects,
+  getNarrativeEvent,
+  getNarrativeSourceLabel,
+} from '../world/events.js';
 
 const WORLD_WIDTH = 2000;
 const WORLD_HEIGHT = 1200;
@@ -39,6 +47,8 @@ export default class GameScene extends Phaser.Scene {
     this.phaseBanner = null;
     this.victoryOverlay = null;
     this.gameOverOverlay = null;
+    this.narrativeOverlay = null;
+    this.narrativeText = null;
     this.inputLocked = false;
     this.domUI = null;
     this.autoMoveEnabled = true;
@@ -81,6 +91,7 @@ export default class GameScene extends Phaser.Scene {
     this.setupOverlays();
     this.setupPois();
 
+    this.handleNarrativePhaseStart();
     this.updateHud();
     this.cameras.main.fadeIn(500, 0, 0, 0);
 
@@ -232,6 +243,32 @@ export default class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     this.gameOverOverlay.add([overBg, overText]);
+
+    this.narrativeOverlay = this.add.container(0, 0).setScrollFactor(0).setVisible(false).setDepth(90);
+    const narrativeBg = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x0f172a, 0.8).setOrigin(0, 0);
+    const narrativeCard = this.add.rectangle(this.scale.width / 2, this.scale.height / 2, 640, 260, 0x111827, 0.95);
+    narrativeCard.setStrokeStyle(2, 0x38bdf8, 0.6);
+    this.narrativeText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 30, '', {
+        fontSize: '18px',
+        color: '#f8fafc',
+        align: 'center',
+        wordWrap: { width: 560 },
+        padding: { x: 12, y: 12 },
+      })
+      .setOrigin(0.5);
+    const continueButton = this.add
+      .rectangle(this.scale.width / 2, this.scale.height / 2 + 90, 160, 44, 0x38bdf8, 0.9)
+      .setInteractive({ useHandCursor: true });
+    const continueText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 + 90, 'Continue', {
+        fontSize: '16px',
+        color: '#0f172a',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5);
+    continueButton.on('pointerdown', () => this.hideNarrativeOverlay());
+    this.narrativeOverlay.add([narrativeBg, narrativeCard, this.narrativeText, continueButton, continueText]);
   }
 
   createLocations(dayLocations) {
@@ -595,6 +632,7 @@ export default class GameScene extends Phaser.Scene {
     }
     this.playPhaseTransition(previousPhase, this.state.phase);
     this.syncPoiMarkers(true);
+    this.handleNarrativePhaseStart();
     this.updateHud();
   }
 
@@ -626,6 +664,7 @@ export default class GameScene extends Phaser.Scene {
     saveGameState(this.state);
     this.playPhaseTransition(previousPhase, this.state.phase);
     this.syncPoiMarkers(true);
+    this.handleNarrativePhaseStart();
     this.updateHud();
   }
 
@@ -692,6 +731,70 @@ export default class GameScene extends Phaser.Scene {
   appendLog(message) {
     if (this.domUI?.appendLog) {
       this.domUI.appendLog(message);
+    }
+  }
+
+  handleNarrativePhaseStart() {
+    this.maybeAddAmbientLine();
+    this.maybeTriggerNarrativeEvent();
+    saveGameState(this.state);
+  }
+
+  maybeAddAmbientLine() {
+    const key = `${this.state.dayNumber}-${this.state.phase}`;
+    if (this.state.lastAmbientLineKey === key) {
+      return;
+    }
+    if (Math.random() > 0.6) {
+      return;
+    }
+    const dominantFaction = getDominantCampFaction(this.state);
+    const context = {
+      currentDistrictId: this.state.currentDistrictId,
+      dominantFaction: dominantFaction?.id || null,
+      campPop: this.state.campPop > 0,
+      phase: this.state.phase,
+      ambientSource: 'City',
+    };
+    const line = getAmbientLine(context);
+    if (line) {
+      addNarrativeEvent(this.state, context.ambientSource, line);
+      this.state.lastAmbientLineKey = key;
+    }
+  }
+
+  maybeTriggerNarrativeEvent() {
+    const event = getNarrativeEvent(this.state);
+    if (!event) {
+      return;
+    }
+    this.state.lastNarrativeEventDay = this.state.dayNumber;
+    applyNarrativeEventEffects(this.state, event);
+    const sourceLabel = getNarrativeSourceLabel(event);
+    addNarrativeEvent(this.state, sourceLabel, event.text);
+    this.showNarrativeOverlay(event.text);
+  }
+
+  showNarrativeOverlay(text) {
+    if (!this.narrativeOverlay || !this.narrativeText) {
+      return;
+    }
+    this.narrativeText.setText(text);
+    this.narrativeOverlay.setVisible(true);
+    this.inputLocked = true;
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(true);
+    }
+  }
+
+  hideNarrativeOverlay() {
+    if (!this.narrativeOverlay) {
+      return;
+    }
+    this.narrativeOverlay.setVisible(false);
+    this.inputLocked = false;
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(false);
     }
   }
 

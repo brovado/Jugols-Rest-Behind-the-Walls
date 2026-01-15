@@ -1,4 +1,9 @@
 import { createFactionStates, normalizeFactionStates } from '../data/factions.js';
+import {
+  DEFAULT_FACTION_ID,
+  FACTION_BY_ID,
+  FACTIONS,
+} from '../world/factions.js';
 import { DISTRICTS, getDistrictConfig } from '../world/districts.js';
 
 const DAY_ACTIONS = 5;
@@ -35,6 +40,149 @@ const getTotalPopulation = (state) => (state.housedPop || 0) + (state.campPop ||
 
 const getForecastForDay = (dayNumber) =>
   BASE_INCOMING + (dayNumber % BURST_INTERVAL === 0 ? BURST_AMOUNT : 0);
+
+const clampPositive = (value) => Math.max(0, Math.floor(value || 0));
+
+export const getIncomingTotal = (groups) =>
+  Array.isArray(groups)
+    ? groups.reduce((sum, group) => sum + clampPositive(group.size), 0)
+    : 0;
+
+const createIncomingGroupsForDay = (dayNumber) => {
+  const total = getForecastForDay(dayNumber);
+  if (total <= 0) {
+    return [];
+  }
+  const factionIds = FACTIONS.map((faction) => faction.id);
+  const groupCount = total >= 12 ? 3 : total >= 6 ? 2 : 1;
+  const baseSize = Math.floor(total / groupCount);
+  const remainder = total % groupCount;
+  return Array.from({ length: groupCount }, (_, idx) => ({
+    factionId: factionIds[(dayNumber + idx) % factionIds.length],
+    size: baseSize + (idx < remainder ? 1 : 0),
+  }));
+};
+
+const normalizeIncomingGroups = (groups, fallbackTotal) => {
+  if (!Array.isArray(groups)) {
+    if (typeof fallbackTotal === 'number') {
+      const size = clampPositive(fallbackTotal);
+      return size > 0
+        ? [
+          {
+            factionId: DEFAULT_FACTION_ID,
+            size,
+          },
+        ]
+        : [];
+    }
+    return [];
+  }
+  return groups
+    .map((group) => ({
+      factionId: FACTION_BY_ID[group?.factionId] ? group.factionId : DEFAULT_FACTION_ID,
+      size: clampPositive(group?.size),
+    }))
+    .filter((group) => group.size > 0);
+};
+
+const normalizeCampFactions = (campFactions, campPop) => {
+  const normalized = {};
+  if (campFactions && typeof campFactions === 'object') {
+    Object.entries(campFactions).forEach(([id, count]) => {
+      if (!FACTION_BY_ID[id]) {
+        return;
+      }
+      const value = clampPositive(count);
+      if (value > 0) {
+        normalized[id] = value;
+      }
+    });
+  }
+  let total = Object.values(normalized).reduce((sum, value) => sum + value, 0);
+  const campCount = clampPositive(campPop);
+  if (campCount > 0 && total === 0) {
+    normalized[DEFAULT_FACTION_ID] = campCount;
+    total = campCount;
+  }
+  if (total > campCount) {
+    const entries = Object.entries(normalized).sort((a, b) => b[1] - a[1]);
+    let excess = total - campCount;
+    entries.forEach(([id, count]) => {
+      if (excess <= 0) {
+        return;
+      }
+      const removal = Math.min(excess, count);
+      const next = count - removal;
+      if (next <= 0) {
+        delete normalized[id];
+      } else {
+        normalized[id] = next;
+      }
+      excess -= removal;
+    });
+  } else if (total < campCount) {
+    normalized[DEFAULT_FACTION_ID] = (normalized[DEFAULT_FACTION_ID] || 0) + (campCount - total);
+  }
+  return normalized;
+};
+
+export const getDominantCampFaction = (state) => {
+  if (!state?.campFactions) {
+    return null;
+  }
+  const entries = Object.entries(state.campFactions).filter(([, count]) => count > 0);
+  if (entries.length === 0) {
+    return null;
+  }
+  entries.sort((a, b) => b[1] - a[1]);
+  const [id] = entries[0];
+  return FACTION_BY_ID[id] || null;
+};
+
+const applyCampPopulation = (state, factionId, count) => {
+  if (count <= 0) {
+    return;
+  }
+  if (!state.campFactions || typeof state.campFactions !== 'object') {
+    state.campFactions = {};
+  }
+  const resolvedId = FACTION_BY_ID[factionId] ? factionId : DEFAULT_FACTION_ID;
+  state.campFactions[resolvedId] = (state.campFactions[resolvedId] || 0) + count;
+};
+
+const removeCampPopulation = (state, count) => {
+  if (!state.campFactions || count <= 0) {
+    return;
+  }
+  const entries = Object.entries(state.campFactions).sort((a, b) => b[1] - a[1]);
+  let remaining = count;
+  entries.forEach(([id, value]) => {
+    if (remaining <= 0) {
+      return;
+    }
+    const removal = Math.min(remaining, value);
+    const next = value - removal;
+    if (next <= 0) {
+      delete state.campFactions[id];
+    } else {
+      state.campFactions[id] = next;
+    }
+    remaining -= removal;
+  });
+  if (Object.keys(state.campFactions).length === 0) {
+    state.campFactions = {};
+  }
+};
+
+const getCampBehavior = (state) => {
+  const dominant = getDominantCampFaction(state);
+  return dominant?.campBehavior || {
+    tensionModifier: 1,
+    overgrowthModifier: 1,
+    ruckusModifier: 1,
+  };
+};
 
 const createPack = () => ([
   {
@@ -233,7 +381,7 @@ export const createInitialState = () => ({
   routeGuardedTonight: false,
   housedPop: 6,
   campPop: 0,
-  incomingNextDay: getForecastForDay(1),
+  incomingGroupsNextDay: createIncomingGroupsForDay(1),
   housingCapacity: 10,
   housingBoostedTonight: false,
   clearedOvergrowthTonight: false,
@@ -242,6 +390,11 @@ export const createInitialState = () => ({
   dayCollectedByDistrict: createDistrictCollections(),
   currentDistrictId: 'heart',
   factions: createFactionStates(),
+  worldFactions: FACTIONS,
+  campFactions: {},
+  narrativeFlags: {},
+  lastNarrativeEventDay: 0,
+  lastAmbientLineKey: '',
   victory: false,
   gameOver: false,
   eventLog: [],
@@ -255,6 +408,14 @@ export const addEvent = (state, message) => {
   if (state.eventLog.length > 25) {
     state.eventLog.shift();
   }
+};
+
+export const addNarrativeEvent = (state, sourceLabel, message) => {
+  if (!message) {
+    return;
+  }
+  const label = sourceLabel || 'City';
+  addEvent(state, `${label}: ${message}`);
 };
 
 export const saveGameState = (state) => {
@@ -290,6 +451,7 @@ export const loadGameState = () => {
         ...(data.activePoisByDistrict || {}),
       },
       eventLog: Array.isArray(data.eventLog) ? data.eventLog : [],
+      worldFactions: base.worldFactions,
     };
     const legacyCollected = data.locationCollected;
     if (!data.dayCollectedByDistrict && legacyCollected) {
@@ -318,12 +480,22 @@ export const loadGameState = () => {
     merged.housedPop = Math.max(0, merged.housedPop || 0);
     merged.campPop = Math.max(0, merged.campPop || 0);
     merged.housingCapacity = Math.max(0, merged.housingCapacity || 0);
-    merged.incomingNextDay =
-      merged.incomingNextDay ?? getForecastForDay(merged.dayNumber + 1);
+    merged.incomingGroupsNextDay = normalizeIncomingGroups(
+      merged.incomingGroupsNextDay,
+      data.incomingNextDay ?? getForecastForDay(merged.dayNumber + 1)
+    );
     merged.campActive = merged.campPop > 0;
+    merged.campFactions = normalizeCampFactions(merged.campFactions, merged.campPop);
     merged.campPressure = clampMeter(merged.campPressure || 0);
     merged.clearedOvergrowthTonight = Boolean(merged.clearedOvergrowthTonight);
     merged.clearedOvergrowthLastNight = Boolean(merged.clearedOvergrowthLastNight);
+    merged.narrativeFlags = merged.narrativeFlags && typeof merged.narrativeFlags === 'object'
+      ? merged.narrativeFlags
+      : {};
+    merged.lastNarrativeEventDay = clampPositive(merged.lastNarrativeEventDay);
+    merged.lastAmbientLineKey = typeof merged.lastAmbientLineKey === 'string'
+      ? merged.lastAmbientLineKey
+      : '';
     return merged;
   } catch (error) {
     console.warn('Failed to load game state', error);
@@ -368,7 +540,11 @@ export const spawnPoisForNight = (state, districtConfig) => {
   if (shouldSpawnRuckus) {
     const baseRuckusCount = state.tension >= 80 ? 2 : 1;
     const ruckusBonus = districtConfig?.nightModifiers?.ruckusBonus ?? 0;
-    const ruckusCount = baseRuckusCount + ruckusBonus;
+    const campBehavior = getCampBehavior(state);
+    const ruckusCount = Math.max(
+      1,
+      Math.round((baseRuckusCount + ruckusBonus) * campBehavior.ruckusModifier)
+    );
     const ruckusSeverity = getRuckusSeverity(state.tension);
     const ruckusPoints = pickPoints(
       anchors.RUCKUS,
@@ -428,36 +604,57 @@ export const startDay = (state, { advanceDay }) => {
   state.tension = clampMeter(state.tension + baselineTension);
   state.routeGuardedTonight = false;
 
-  const arrivals = Math.max(0, state.incomingNextDay || 0);
-  const availableHousing = getAvailableHousing(state);
-  const toHouse = Math.min(arrivals, availableHousing);
-  const overflow = Math.max(0, arrivals - toHouse);
-  state.housedPop += toHouse;
-  state.campPop += overflow;
-  state.campActive = state.campPop > 0;
-  if (arrivals > 0) {
+  const incomingGroups = normalizeIncomingGroups(state.incomingGroupsNextDay);
+  const arrivals = getIncomingTotal(incomingGroups);
+  incomingGroups.forEach((group) => {
+    if (group.size <= 0) {
+      return;
+    }
+    const availableHousing = getAvailableHousing(state);
+    const toHouse = Math.min(group.size, availableHousing);
+    const overflow = Math.max(0, group.size - toHouse);
+    state.housedPop += toHouse;
+    state.campPop += overflow;
+    if (overflow > 0) {
+      applyCampPopulation(state, group.factionId, overflow);
+    }
+    const faction = FACTION_BY_ID[group.factionId];
+    const factionName = faction?.displayName || 'Arrivals';
+    const flavor = faction?.arrivalFlavor || 'New families step carefully through the gates.';
     addEvent(
       state,
-      `Dawn: +${arrivals} arrivals. Housed +${toHouse}, Camped +${overflow}.`
+      `${factionName}: ${flavor} (+${group.size} arrivals; Housed +${toHouse}, Camped +${overflow}).`
     );
-  }
+  });
+  state.campActive = state.campPop > 0;
+  state.campFactions = normalizeCampFactions(state.campFactions, state.campPop);
 
   if (state.campPop > 0) {
     state.campPressure = clampMeter(
       state.campPressure + 5 + Math.floor(state.campPop / 5) * 2
     );
-    state.tension = clampMeter(
-      state.tension + 5 + Math.floor(state.campPop / 5) * 3
+    const campBehavior = getCampBehavior(state);
+    const tensionDelta = Math.round(
+      (5 + Math.floor(state.campPop / 5) * 3) * campBehavior.tensionModifier
     );
-    state.overgrowth = clampMeter(
-      state.overgrowth + 3 + Math.floor(state.campPop / 10) * 2
+    const overgrowthDelta = Math.round(
+      (3 + Math.floor(state.campPop / 10) * 2) * campBehavior.overgrowthModifier
     );
+    state.tension = clampMeter(state.tension + tensionDelta);
+    state.overgrowth = clampMeter(state.overgrowth + overgrowthDelta);
   } else {
     state.campPressure = clampMeter(state.campPressure - 10);
   }
 
-  state.incomingNextDay = getForecastForDay(state.dayNumber + 1);
-  addEvent(state, `Forecast: +${state.incomingNextDay} arriving tomorrow.`);
+  state.incomingGroupsNextDay = createIncomingGroupsForDay(state.dayNumber + 1);
+  const forecastTotal = getIncomingTotal(state.incomingGroupsNextDay);
+  const forecastFactions = state.incomingGroupsNextDay
+    .map((group) => FACTION_BY_ID[group.factionId]?.displayName || 'Arrivals')
+    .join(', ');
+  addEvent(
+    state,
+    `Forecast: +${forecastTotal} arriving tomorrow${forecastFactions ? ` (${forecastFactions}).` : '.'}`
+  );
 
   evaluateVictory(state);
   evaluateCollapse(state);
@@ -580,8 +777,12 @@ export const stabilizeCamp = (state) => {
   if (moved > 0) {
     state.housedPop += moved;
     state.campPop -= moved;
+    removeCampPopulation(state, moved);
   }
   state.campActive = state.campPop > 0;
+  if (!state.campActive) {
+    state.campFactions = {};
+  }
   state.dayActionsRemaining -= 1;
   return { moved };
 };
