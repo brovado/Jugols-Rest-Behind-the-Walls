@@ -51,6 +51,12 @@ const FATTY_POWER_BY_ROLE = {
   Warden: 1,
 };
 
+const normalizeOnboardingFlags = (flags) => ({
+  packWardenSeen: Boolean(flags?.packWardenSeen),
+  cityWardenSeen: Boolean(flags?.cityWardenSeen),
+  timeWardenSeen: Boolean(flags?.timeWardenSeen),
+});
+
 export const clampMeter = (value) => Math.max(0, Math.min(MAX_METER, value));
 
 const getAvailableHousing = (state) =>
@@ -476,6 +482,7 @@ export const createInitialState = () => {
   narrativeFlags: {},
   lastNarrativeEventDay: 0,
   lastAmbientLineKey: '',
+  onboardingFlags: normalizeOnboardingFlags(),
   discoveredShrines: {},
   activeBlessings: [],
   lastShrineGodIds: [],
@@ -614,6 +621,7 @@ export const loadGameState = () => {
     merged.housedPop = Math.max(0, merged.housedPop || 0);
     merged.campPop = Math.max(0, merged.campPop || 0);
     merged.housingCapacity = Math.max(0, merged.housingCapacity || 0);
+    merged.onboardingFlags = normalizeOnboardingFlags(merged.onboardingFlags);
     merged.incomingGroupsNextDay = normalizeIncomingGroups(
       merged.incomingGroupsNextDay,
       data.incomingNextDay ?? getForecastForDay(merged.dayNumber + 1)

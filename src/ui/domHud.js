@@ -148,6 +148,8 @@ export const initDomHud = (state, callbacks) => {
   const interactionPromptText = interactionPrompt?.querySelector('.interaction-prompt-text') || null;
   const interactionPromptReason =
     interactionPrompt?.querySelector('.interaction-prompt-reason') || null;
+  const wardenLine = document.getElementById('warden-line');
+  const wardenLineText = wardenLine?.querySelector('.warden-line-text') || null;
 
   if (!actionsPanel || !packPanel || !feedPanel || !metersPanel || !populationPanel || !consoleLog) {
     return null;
@@ -310,6 +312,7 @@ export const initDomHud = (state, callbacks) => {
   let lastPopulationSnapshot = null;
   let lastPopulationChangeAt = 0;
   let shrineListVisible = false;
+  let wardenLineTimer = null;
   const updateHeader = (stateSnapshot) => {
     const district = getDistrictConfig(stateSnapshot.currentDistrictId);
     if (headerLeft) {
@@ -780,6 +783,20 @@ export const initDomHud = (state, callbacks) => {
       statusFlashTimer = window.setTimeout(() => {
         statusText.classList.remove('hud-status-flash');
       }, 600);
+    },
+    showWardenLine: (text, duration = 2500) => {
+      if (!wardenLine || !wardenLineText) {
+        return;
+      }
+      if (wardenLineTimer) {
+        window.clearTimeout(wardenLineTimer);
+      }
+      wardenLineText.textContent = text || '';
+      wardenLine.classList.add('is-visible');
+      wardenLineTimer = window.setTimeout(() => {
+        wardenLine.classList.remove('is-visible');
+        wardenLineText.textContent = '';
+      }, duration);
     },
   };
 
