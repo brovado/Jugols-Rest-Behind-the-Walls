@@ -6,9 +6,10 @@ import {
   collectLocation,
   feedHyenas,
   stabilizeCamp,
-  clearOvergrowth,
-  guardRoute,
-  suppressThreat,
+  clampMeter,
+  spawnPoisForDay,
+  spawnPoisForNight,
+  resolvePoi,
   addEvent,
   saveGameState,
   loadGameState,
@@ -40,6 +41,9 @@ export default class GameScene extends Phaser.Scene {
     this.domUI = null;
     this.autoMoveEnabled = true;
     this.lastPosition = null;
+    this.poiMarkers = new Map();
+    this.poiLayer = null;
+    this.poiPulseTweens = new Map();
   }
 
   create(data = {}) {
@@ -53,6 +57,9 @@ export default class GameScene extends Phaser.Scene {
     } else if (data.loadSave) {
       addEvent(this.state, 'The watch resumes from the last report.');
     }
+    if (this.state.phase === 'NIGHT' && this.state.activePois?.length === 0) {
+      spawnPoisForNight(this.state);
+    }
 
     this.setupWorld();
     this.setupPlayer();
@@ -61,6 +68,7 @@ export default class GameScene extends Phaser.Scene {
     this.setupDomUI();
     this.setupDomHud();
     this.setupOverlays();
+    this.setupPois();
 
     this.updateHud();
     this.cameras.main.fadeIn(500, 0, 0, 0);
@@ -83,7 +91,6 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.createLocations();
-    this.createZones();
   }
 
   setupPlayer() {
@@ -111,6 +118,11 @@ export default class GameScene extends Phaser.Scene {
     this.targetMarker = this.add
       .circle(0, 0, CLICK_RADIUS, 0x38bdf8, 0.9)
       .setVisible(false);
+  }
+
+  setupPois() {
+    this.poiLayer = this.add.container(0, 0);
+    this.syncPoiMarkers(true);
   }
 
   setupInput() {
@@ -165,6 +177,7 @@ export default class GameScene extends Phaser.Scene {
       onClearOvergrowth: () => this.handleClearOvergrowth(),
       onGuardRoute: () => this.handleGuardRoute(),
       onSuppressThreat: () => this.handleSuppressThreat(),
+      onSecureLot: () => this.handleSecureLot(),
       onEndNight: () => this.handleEndNight(),
       onConfirmFeed: (feedPlan) => this.handleFeed(feedPlan),
     });
@@ -233,40 +246,6 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  createZones() {
-    this.zones = {
-      overgrowth: new Phaser.Geom.Rectangle(1200, 200, 260, 200),
-      route: new Phaser.Geom.Rectangle(1300, 550, 260, 200),
-      threat: new Phaser.Geom.Rectangle(1050, 850, 260, 200),
-    };
-
-    this.zoneGraphics = this.add.graphics();
-    this.drawZones();
-  }
-
-  drawZones() {
-    this.zoneGraphics.clear();
-    this.zoneGraphics.lineStyle(3, 0x4ade80, 0.8);
-    this.zoneGraphics.strokeRectShape(this.zones.overgrowth);
-    this.zoneGraphics.lineStyle(3, 0x38bdf8, 0.8);
-    this.zoneGraphics.strokeRectShape(this.zones.route);
-    this.zoneGraphics.lineStyle(3, 0xf97316, 0.8);
-    this.zoneGraphics.strokeRectShape(this.zones.threat);
-
-    this.add.text(this.zones.overgrowth.x + 10, this.zones.overgrowth.y - 24, 'Overgrowth Zone', {
-      fontSize: '14px',
-      color: '#bbf7d0',
-    });
-    this.add.text(this.zones.route.x + 10, this.zones.route.y - 24, 'Route Zone', {
-      fontSize: '14px',
-      color: '#bae6fd',
-    });
-    this.add.text(this.zones.threat.x + 10, this.zones.threat.y - 24, 'Threat Zone', {
-      fontSize: '14px',
-      color: '#fed7aa',
-    });
-  }
-
   update(time, delta) {
     if (this.state.victory || this.state.gameOver) {
       return;
@@ -275,6 +254,7 @@ export default class GameScene extends Phaser.Scene {
     if (!this.inputLocked) {
       this.handleMovement(delta);
     }
+    this.syncPoiMarkers();
     this.updateHud();
     this.updateStatus(delta);
   }
@@ -319,13 +299,25 @@ export default class GameScene extends Phaser.Scene {
   }
 
   updateHud() {
+    const activePois = this.getActivePois();
+    const nearest = this.getNearestPoi(activePois);
+    const nearestPoi = nearest?.poi || null;
+    const nearestDistance = nearest?.distance ?? null;
+    const nearestInRange =
+      nearestPoi && typeof nearestDistance === 'number'
+        ? nearestDistance <= (nearestPoi.radius || INTERACT_RADIUS)
+        : false;
     const context = {
       nearButcher: this.isNearLocation('butcher'),
       nearTavern: this.isNearLocation('tavern'),
       nearMarket: this.isNearLocation('market'),
-      inOvergrowthZone: this.isInZone('overgrowth'),
-      inRouteZone: this.isInZone('route'),
-      inThreatZone: this.isInZone('threat'),
+      activePois: activePois.map((poi) => ({
+        ...poi,
+        distance: Phaser.Math.Distance.Between(this.player.x, this.player.y, poi.x, poi.y),
+      })),
+      nearestPoi,
+      nearestPoiDistance: nearestDistance,
+      nearestPoiInRange: nearestInRange,
     };
     if (this.domHud) {
       this.domHud.update(this.state, context);
@@ -352,14 +344,6 @@ export default class GameScene extends Phaser.Scene {
       return false;
     }
     return Phaser.Math.Distance.Between(this.player.x, this.player.y, loc.x, loc.y) <= INTERACT_RADIUS;
-  }
-
-  isInZone(zoneKey) {
-    const zone = this.zones[zoneKey];
-    if (!zone) {
-      return false;
-    }
-    return zone.contains(this.player.x, this.player.y);
   }
 
   playPhaseTransition(fromPhase, toPhase) {
@@ -441,43 +425,31 @@ export default class GameScene extends Phaser.Scene {
     }
     const previousPhase = this.state.phase;
     startNight(this.state);
+    spawnPoisForNight(this.state);
     addEvent(this.state, 'Night falls over Jugol’s Rest.');
     saveGameState(this.state);
     if (this.domHud) {
       this.domHud.hideFeedPanel();
     }
     this.playPhaseTransition(previousPhase, this.state.phase);
+    this.syncPoiMarkers(true);
     this.updateHud();
   }
 
   handleClearOvergrowth() {
-    if (clearOvergrowth(this.state)) {
-      addEvent(this.state, 'Carved back the overgrowth.');
-      if (this.domHud) {
-        this.domHud.flashNightStats();
-      }
-      this.updateHud();
-    }
+    this.handlePoiAction('OVERGROWTH');
   }
 
   handleGuardRoute() {
-    if (guardRoute(this.state)) {
-      addEvent(this.state, 'Guarded the route through the ruins.');
-      if (this.domHud) {
-        this.domHud.flashNightStats();
-      }
-      this.updateHud();
-    }
+    this.handlePoiAction('ROUTE');
   }
 
   handleSuppressThreat() {
-    if (suppressThreat(this.state)) {
-      addEvent(this.state, 'Suppressed the lurking threat.');
-      if (this.domHud) {
-        this.domHud.flashNightStats();
-      }
-      this.updateHud();
-    }
+    this.handlePoiAction('RUCKUS');
+  }
+
+  handleSecureLot() {
+    this.handlePoiAction('LOT');
   }
 
   handleEndNight() {
@@ -487,8 +459,10 @@ export default class GameScene extends Phaser.Scene {
     const previousPhase = this.state.phase;
     endNight(this.state);
     addEvent(this.state, 'Dawn breaks, the watch rotates.');
+    spawnPoisForDay(this.state);
     saveGameState(this.state);
     this.playPhaseTransition(previousPhase, this.state.phase);
+    this.syncPoiMarkers(true);
     this.updateHud();
   }
 
@@ -555,6 +529,204 @@ export default class GameScene extends Phaser.Scene {
   appendLog(message) {
     if (this.domUI?.appendLog) {
       this.domUI.appendLog(message);
+    }
+  }
+
+  getActivePois() {
+    if (!Array.isArray(this.state.activePois)) {
+      return [];
+    }
+    return this.state.activePois.filter((poi) => !poi.resolved);
+  }
+
+  getNearestPoi(activePois) {
+    if (!Array.isArray(activePois) || activePois.length === 0) {
+      return null;
+    }
+    return activePois.reduce((nearest, poi) => {
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, poi.x, poi.y);
+      if (!nearest || distance < nearest.distance) {
+        return { poi, distance };
+      }
+      return nearest;
+    }, null);
+  }
+
+  handlePoiAction(type) {
+    if (this.state.phase !== 'NIGHT') {
+      return;
+    }
+    const activePois = this.getActivePois();
+    const nearest = this.getNearestPoi(activePois);
+    if (!nearest || nearest.poi.type !== type) {
+      return;
+    }
+    const { poi, distance } = nearest;
+    if (distance > (poi.radius || INTERACT_RADIUS)) {
+      return;
+    }
+
+    if (type === 'OVERGROWTH') {
+      const cost = 2 + poi.severity;
+      if (this.state.packStamina < cost) {
+        return;
+      }
+      this.state.packStamina -= cost;
+      this.state.overgrowth = clampMeter(
+        this.state.overgrowth - (15 + poi.severity * 5)
+      );
+      this.state.housingCapacity += 1;
+      this.state.clearedOvergrowthTonight = true;
+      addEvent(this.state, 'Cleared overgrowth: Housing capacity +1.');
+    }
+
+    if (type === 'ROUTE') {
+      const cost = 2;
+      if (this.state.packStamina < cost) {
+        return;
+      }
+      this.state.packStamina -= cost;
+      this.state.routeGuardedTonight = true;
+      addEvent(this.state, 'Patrolled the route through the ruins.');
+    }
+
+    if (type === 'RUCKUS') {
+      const cost = 3;
+      if (this.state.packStamina < cost || this.state.packPower < 2) {
+        return;
+      }
+      this.state.packStamina -= cost;
+      this.state.tension = clampMeter(
+        this.state.tension - (10 + poi.severity * 5)
+      );
+      this.state.threatActive = false;
+      addEvent(this.state, 'Suppressed a ruckus: tension eased.');
+    }
+
+    if (type === 'LOT') {
+      const cost = 2;
+      if (this.state.packStamina < cost) {
+        return;
+      }
+      this.state.packStamina -= cost;
+      this.state.housingCapacity += 2;
+      this.state.campPressure = clampMeter(this.state.campPressure - 10);
+      addEvent(this.state, 'Secured a lot: Housing capacity +2.');
+    }
+
+    const resolved = resolvePoi(this.state, poi.id);
+    if (resolved) {
+      this.animatePoiResolution(resolved.id);
+    }
+    if (this.domHud) {
+      this.domHud.flashNightStats();
+    }
+    this.updateHud();
+  }
+
+  syncPoiMarkers(force = false) {
+    if (!this.poiLayer) {
+      return;
+    }
+    const activePois = Array.isArray(this.state.activePois) ? this.state.activePois : [];
+    const activeIds = new Set(activePois.map((poi) => poi.id));
+
+    this.poiMarkers.forEach((marker, id) => {
+      if (!activeIds.has(id)) {
+        const tween = this.poiPulseTweens.get(id);
+        if (tween) {
+          tween.stop();
+          this.poiPulseTweens.delete(id);
+        }
+        marker.container.destroy();
+        this.poiMarkers.delete(id);
+      }
+    });
+
+    activePois.forEach((poi) => {
+      if (!this.poiMarkers.has(poi.id)) {
+        const marker = this.createPoiMarker(poi);
+        this.poiMarkers.set(poi.id, marker);
+      } else if (force) {
+        const marker = this.poiMarkers.get(poi.id);
+        marker.container.setPosition(poi.x, poi.y);
+      }
+
+      const marker = this.poiMarkers.get(poi.id);
+      if (poi.resolved && marker && !marker.resolving) {
+        marker.resolving = true;
+        this.animatePoiResolution(poi.id);
+      }
+    });
+  }
+
+  createPoiMarker(poi) {
+    const { color, label } = this.getPoiStyle(poi.type);
+    const container = this.add.container(poi.x, poi.y);
+    const core = this.add.circle(0, 0, 10, color, 0.9);
+    const ring = this.add.circle(0, 0, poi.radius || 60, color, 0.1);
+    ring.setStrokeStyle(2, color, 0.8);
+
+    const text = this.add
+      .text(0, -(poi.radius || 60) - 14, `${label} ${poi.severity}`, {
+        fontSize: '12px',
+        color: '#f8fafc',
+        backgroundColor: 'rgba(15, 23, 42, 0.6)',
+        padding: { x: 4, y: 2 },
+      })
+      .setOrigin(0.5);
+
+    container.add([ring, core, text]);
+    this.poiLayer.add(container);
+
+    const tween = this.tweens.add({
+      targets: ring,
+      scale: 1.4,
+      alpha: 0,
+      duration: 1200,
+      repeat: -1,
+      yoyo: false,
+      ease: 'Sine.easeOut',
+    });
+    this.poiPulseTweens.set(poi.id, tween);
+
+    return { container, ring, core, text, resolving: false };
+  }
+
+  animatePoiResolution(id) {
+    const marker = this.poiMarkers.get(id);
+    if (!marker) {
+      return;
+    }
+    const tween = this.poiPulseTweens.get(id);
+    if (tween) {
+      tween.stop();
+      this.poiPulseTweens.delete(id);
+    }
+    this.tweens.add({
+      targets: marker.container,
+      alpha: 0,
+      duration: 500,
+      ease: 'Sine.easeIn',
+      onComplete: () => {
+        marker.container.destroy();
+        this.poiMarkers.delete(id);
+      },
+    });
+  }
+
+  getPoiStyle(type) {
+    switch (type) {
+      case 'OVERGROWTH':
+        return { color: 0x4ade80, label: 'O' };
+      case 'RUCKUS':
+        return { color: 0xf97316, label: 'RK' };
+      case 'ROUTE':
+        return { color: 0x38bdf8, label: 'RT' };
+      case 'LOT':
+        return { color: 0xa855f7, label: 'L' };
+      default:
+        return { color: 0x94a3b8, label: '?' };
     }
   }
 }

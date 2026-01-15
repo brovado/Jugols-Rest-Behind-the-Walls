@@ -1,4 +1,4 @@
-import { getHyenaContribution, hasPackRole } from '../state/gameState.js';
+import { getHyenaContribution } from '../state/gameState.js';
 import { getDomUI } from './domUI.js';
 import {
   isPanelOpen,
@@ -27,7 +27,9 @@ const setVisible = (el, visible) => {
 };
 
 const createHudButton = (label, onClick) => {
+  const wrapper = createElement('div', 'hud-button-wrapper');
   const button = createElement('button', 'hud-button');
+  const reason = createElement('div', 'hud-button-reason', '');
   button.type = 'button';
   button.textContent = label;
   button.addEventListener('click', () => {
@@ -36,14 +38,25 @@ const createHudButton = (label, onClick) => {
     }
   });
 
+  wrapper.append(button, reason);
+
   return {
-    el: button,
+    el: wrapper,
     setEnabled: (enabled) => {
       button.disabled = !enabled;
     },
-    setVisible: (visible) => setVisible(button, visible),
+    setVisible: (visible) => setVisible(wrapper, visible),
     setHighlighted: (highlighted) => {
       button.classList.toggle('is-highlighted', Boolean(highlighted));
+    },
+    setReason: (text) => {
+      if (text) {
+        reason.textContent = text;
+        reason.classList.add('is-visible');
+      } else {
+        reason.textContent = '';
+        reason.classList.remove('is-visible');
+      }
     },
   };
 };
@@ -136,6 +149,11 @@ export const initDomHud = (state, callbacks) => {
   hudStatus.append(hudStatusRow, statusText);
 
   const actionGroup = createElement('div', 'hud-action-group');
+  const poiPanel = createElement('div', 'poi-panel');
+  const poiHeader = createElement('div', 'poi-panel-header', 'Active Patrols');
+  const poiContext = createElement('div', 'poi-context', '');
+  const poiList = createElement('div', 'poi-list');
+  poiPanel.append(poiHeader, poiContext, poiList);
 
   const actionsConfig = [
     {
@@ -214,44 +232,103 @@ export const initDomHud = (state, callbacks) => {
       id: 'clear_overgrowth',
       label: 'Clear Overgrowth',
       onClick: callbacks.onClearOvergrowth,
-      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
-      enabledWhen: (stateSnapshot, context) =>
-        !interactionLocked &&
-        context.inOvergrowthZone &&
-        stateSnapshot.packStamina >= 2,
-      highlightWhen: (stateSnapshot) => stateSnapshot.overgrowth >= 60,
+      visibleWhen: (stateSnapshot, context) =>
+        stateSnapshot.phase === 'NIGHT' &&
+        context.nearestPoi?.type === 'OVERGROWTH',
+      enabledWhen: (stateSnapshot, context) => {
+        const severity = context.nearestPoi?.severity || 1;
+        const cost = 2 + severity;
+        return (
+          !interactionLocked &&
+          context.nearestPoiInRange &&
+          stateSnapshot.packStamina >= cost
+        );
+      },
+      highlightWhen: (stateSnapshot, context) =>
+        Boolean(context.nearestPoiInRange) || stateSnapshot.overgrowth >= 60,
+      getDisableReason: (stateSnapshot, context) => {
+        const severity = context.nearestPoi?.severity || 1;
+        const cost = 2 + severity;
+        if (!context.nearestPoiInRange) {
+          return 'Move closer to the overgrowth.';
+        }
+        if (stateSnapshot.packStamina < cost) {
+          return `Need ${cost} stamina.`;
+        }
+        return '';
+      },
     },
     {
       id: 'guard_route',
       label: 'Guard Route',
       onClick: callbacks.onGuardRoute,
-      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
-      enabledWhen: (stateSnapshot, context) => {
-        const guardCost = Math.max(1, hasPackRole(stateSnapshot.pack, 'Scout') ? 1 : 2);
-        return (
-          !interactionLocked &&
-          context.inRouteZone &&
-          stateSnapshot.packStamina >= guardCost
-        );
+      visibleWhen: (stateSnapshot, context) =>
+        stateSnapshot.phase === 'NIGHT' &&
+        context.nearestPoi?.type === 'ROUTE',
+      enabledWhen: (stateSnapshot, context) =>
+        !interactionLocked &&
+        context.nearestPoiInRange &&
+        stateSnapshot.packStamina >= 2,
+      highlightWhen: (stateSnapshot, context) =>
+        Boolean(context.nearestPoiInRange) || stateSnapshot.threatActive,
+      getDisableReason: (stateSnapshot, context) => {
+        if (!context.nearestPoiInRange) {
+          return 'Move closer to the patrol route.';
+        }
+        if (stateSnapshot.packStamina < 2) {
+          return 'Need 2 stamina.';
+        }
+        return '';
       },
-      highlightWhen: (stateSnapshot) => stateSnapshot.threatActive,
     },
     {
       id: 'suppress_threat',
       label: 'Suppress Threat',
       onClick: callbacks.onSuppressThreat,
-      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
-      enabledWhen: (stateSnapshot, context) => {
-        const powerRequirement = hasPackRole(stateSnapshot.pack, 'Bruiser') ? 1 : 2;
-        return (
-          !interactionLocked &&
-          context.inThreatZone &&
-          stateSnapshot.threatActive &&
-          stateSnapshot.packStamina >= 3 &&
-          stateSnapshot.packPower >= powerRequirement
-        );
+      visibleWhen: (stateSnapshot, context) =>
+        stateSnapshot.phase === 'NIGHT' &&
+        context.nearestPoi?.type === 'RUCKUS',
+      enabledWhen: (stateSnapshot, context) =>
+        !interactionLocked &&
+        context.nearestPoiInRange &&
+        stateSnapshot.packStamina >= 3 &&
+        stateSnapshot.packPower >= 2,
+      highlightWhen: (stateSnapshot, context) =>
+        Boolean(context.nearestPoiInRange) || stateSnapshot.threatActive,
+      getDisableReason: (stateSnapshot, context) => {
+        if (!context.nearestPoiInRange) {
+          return 'Move closer to the ruckus.';
+        }
+        if (stateSnapshot.packStamina < 3) {
+          return 'Need 3 stamina.';
+        }
+        if (stateSnapshot.packPower < 2) {
+          return 'Need 2 power.';
+        }
+        return '';
       },
-      highlightWhen: (stateSnapshot) => stateSnapshot.threatActive,
+    },
+    {
+      id: 'secure_lot',
+      label: 'Secure Lot',
+      onClick: callbacks.onSecureLot,
+      visibleWhen: (stateSnapshot, context) =>
+        stateSnapshot.phase === 'NIGHT' &&
+        context.nearestPoi?.type === 'LOT',
+      enabledWhen: (stateSnapshot, context) =>
+        !interactionLocked &&
+        context.nearestPoiInRange &&
+        stateSnapshot.packStamina >= 2,
+      highlightWhen: (stateSnapshot, context) => Boolean(context.nearestPoiInRange),
+      getDisableReason: (stateSnapshot, context) => {
+        if (!context.nearestPoiInRange) {
+          return 'Move closer to the lot.';
+        }
+        if (stateSnapshot.packStamina < 2) {
+          return 'Need 2 stamina.';
+        }
+        return '';
+      },
     },
     {
       id: 'end_night',
@@ -277,7 +354,7 @@ export const initDomHud = (state, callbacks) => {
     actionVisibility.set(action.id, false);
   });
 
-  actionsPanel.append(hudStatus, actionGroup);
+  actionsPanel.append(hudStatus, poiPanel, actionGroup);
 
   const packSummary = createElement('div', null, 'Tonight’s contributions:');
   const packCardsContainer = createElement('div', 'hud-action-group');
@@ -537,6 +614,83 @@ export const initDomHud = (state, callbacks) => {
         : `Pack Stamina: ${stateSnapshot.packStamina} | Power: ${stateSnapshot.packPower}`;
   };
 
+  const formatPoiType = (type) => {
+    switch (type) {
+      case 'OVERGROWTH':
+        return 'Overgrowth';
+      case 'ROUTE':
+        return 'Route';
+      case 'RUCKUS':
+        return 'Ruckus';
+      case 'LOT':
+        return 'Lot';
+      default:
+        return 'Unknown';
+    }
+  };
+
+  const getPoiIcon = (type) => {
+    switch (type) {
+      case 'OVERGROWTH':
+        return 'O';
+      case 'ROUTE':
+        return 'RT';
+      case 'RUCKUS':
+        return 'RK';
+      case 'LOT':
+        return 'L';
+      default:
+        return '?';
+    }
+  };
+
+  const updatePoiPanel = (stateSnapshot, context) => {
+    if (stateSnapshot.phase !== 'NIGHT') {
+      poiContext.textContent = 'Patrols go live at nightfall.';
+      poiList.innerHTML = '';
+      return;
+    }
+
+    const activePois = Array.isArray(context.activePois) ? context.activePois : [];
+    const sorted = activePois
+      .slice()
+      .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
+
+    if (context.nearestPoiInRange && context.nearestPoi) {
+      poiContext.textContent = `Nearest POI: ${formatPoiType(context.nearestPoi.type)} (Severity ${context.nearestPoi.severity})`;
+    } else if (context.nearestPoi) {
+      poiContext.textContent = `Nearest POI: ${formatPoiType(context.nearestPoi.type)} (${Math.round(
+        context.nearestPoiDistance || 0
+      )}m)`;
+    } else {
+      poiContext.textContent = 'No active patrols found.';
+    }
+
+    poiList.innerHTML = '';
+    if (sorted.length === 0) {
+      const emptyRow = createElement('div', 'poi-row poi-row-empty', 'No active POIs.');
+      poiList.appendChild(emptyRow);
+      return;
+    }
+
+    sorted.slice(0, 4).forEach((poi) => {
+      const row = createElement('div', 'poi-row');
+      const icon = createElement('div', 'poi-icon', getPoiIcon(poi.type));
+      const label = createElement(
+        'div',
+        'poi-label',
+        `${formatPoiType(poi.type)} (S${poi.severity})`
+      );
+      const distance = createElement(
+        'div',
+        'poi-distance',
+        `${Math.round(poi.distance ?? 0)}m`
+      );
+      row.append(icon, label, distance);
+      poiList.appendChild(row);
+    });
+  };
+
   const updateButtons = (stateSnapshot, context) => {
     actionButtons.forEach((action, actionId) => {
       const isVisible = action.visibleWhen?.(stateSnapshot, context) ?? true;
@@ -554,8 +708,13 @@ export const initDomHud = (state, callbacks) => {
 
       const isEnabled = action.enabledWhen?.(stateSnapshot, context) ?? true;
       const isHighlighted = action.highlightWhen?.(stateSnapshot, context) ?? false;
+      const reasonText =
+        !isEnabled && action.getDisableReason
+          ? action.getDisableReason(stateSnapshot, context)
+          : '';
       action.button.setEnabled(isEnabled);
       action.button.setHighlighted(isHighlighted);
+      action.button.setReason(reasonText);
     });
 
     updateFeedPanel(stateSnapshot);
@@ -742,6 +901,7 @@ export const initDomHud = (state, callbacks) => {
   domHudInstance = {
     update: (stateSnapshot, context) => {
       updateTopStatus(stateSnapshot);
+      updatePoiPanel(stateSnapshot, context);
       updateButtons(stateSnapshot, context);
       updateMeters(stateSnapshot);
       updatePopulationPanel(stateSnapshot);
