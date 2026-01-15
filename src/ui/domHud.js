@@ -57,6 +57,9 @@ const createHudButton = (label, onClick) => {
     setEnabled: (enabled) => {
       button.disabled = !enabled;
     },
+    setLabel: (nextLabel) => {
+      button.textContent = nextLabel;
+    },
     setVisible: (visible) => setVisible(wrapper, visible),
     setHighlighted: (highlighted) => {
       button.classList.toggle('is-highlighted', Boolean(highlighted));
@@ -192,54 +195,37 @@ export const initDomHud = (state, callbacks) => {
   );
 
   const getDistrictCollected = (stateSnapshot) =>
-    stateSnapshot.dayCollectedByDistrict?.[stateSnapshot.currentDistrictId] || {
-      butcher: false,
-      tavern: false,
-      market: false,
-    };
+    stateSnapshot.dayCollectedByDistrict?.[stateSnapshot.currentDistrictId] || {};
+
+  const isContactCollected = (stateSnapshot, contactId) =>
+    Boolean(getDistrictCollected(stateSnapshot)[contactId]);
 
   const getNightActionCost = (stateSnapshot, baseCost) =>
     Math.max(1, baseCost + getBlessingActionCostModifier(stateSnapshot));
 
   const actionsConfig = [
     {
-      id: 'collect_butcher',
-      label: 'Collect: Butcher',
-      onClick: callbacks.onCollectButcher,
+      id: 'contact_interact',
+      label: 'Speak with Contact',
+      onClick: () => {
+        const contactId = currentContext?.nearbyContact?.contactId;
+        if (contactId) {
+          callbacks.onCollectContact?.(contactId);
+        }
+      },
       visibleWhen: (stateSnapshot, context) =>
         stateSnapshot.phase === 'DAY' &&
-        context.nearButcher &&
-        !getDistrictCollected(stateSnapshot).butcher,
+        Boolean(context.nearbyContact?.contactId) &&
+        !isContactCollected(stateSnapshot, context.nearbyContact.contactId),
       enabledWhen: (stateSnapshot) =>
         stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
       highlightWhen: (stateSnapshot, context) =>
-        stateSnapshot.dayActionsRemaining > 0 && context.nearButcher,
-    },
-    {
-      id: 'collect_tavern',
-      label: 'Collect: Tavern',
-      onClick: callbacks.onCollectTavern,
-      visibleWhen: (stateSnapshot, context) =>
-        stateSnapshot.phase === 'DAY' &&
-        context.nearTavern &&
-        !getDistrictCollected(stateSnapshot).tavern,
-      enabledWhen: (stateSnapshot) =>
-        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
-      highlightWhen: (stateSnapshot, context) =>
-        stateSnapshot.dayActionsRemaining > 0 && context.nearTavern,
-    },
-    {
-      id: 'collect_market',
-      label: 'Collect: Market',
-      onClick: callbacks.onCollectMarket,
-      visibleWhen: (stateSnapshot, context) =>
-        stateSnapshot.phase === 'DAY' &&
-        context.nearMarket &&
-        !getDistrictCollected(stateSnapshot).market,
-      enabledWhen: (stateSnapshot) =>
-        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
-      highlightWhen: (stateSnapshot, context) =>
-        stateSnapshot.dayActionsRemaining > 0 && context.nearMarket,
+        stateSnapshot.dayActionsRemaining > 0 && Boolean(context.nearbyContact),
+      getLabel: (context) => {
+        const name = context.nearbyContact?.label || 'Contact';
+        const icon = context.nearbyContact?.faction?.icon;
+        return icon ? `Speak with ${icon} ${name}` : `Speak with ${name}`;
+      },
     },
     {
       id: 'feed_pack',
@@ -632,6 +618,7 @@ export const initDomHud = (state, callbacks) => {
   let lastPopulationSnapshot = null;
   let lastPopulationChangeAt = 0;
   let shrineListVisible = false;
+  let currentContext = null;
 
   shrineToggle.addEventListener('click', () => {
     shrineListVisible = !shrineListVisible;
@@ -854,6 +841,7 @@ export const initDomHud = (state, callbacks) => {
   };
 
   const updateButtons = (stateSnapshot, context) => {
+    currentContext = context;
     actionButtons.forEach((action, actionId) => {
       const isVisible = action.visibleWhen?.(stateSnapshot, context) ?? true;
       const wasVisible = actionVisibility.get(actionId) ?? false;
@@ -874,6 +862,9 @@ export const initDomHud = (state, callbacks) => {
         !isEnabled && action.getDisableReason
           ? action.getDisableReason(stateSnapshot, context)
           : '';
+      if (action.getLabel) {
+        action.button.setLabel(action.getLabel(context));
+      }
       action.button.setEnabled(isEnabled);
       action.button.setHighlighted(isHighlighted);
       action.button.setReason(reasonText);

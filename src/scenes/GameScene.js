@@ -28,8 +28,14 @@ import {
   formatBlessingEffect,
   getBlessingActionCostModifier,
 } from '../world/blessings.js';
+import { FACTION_BY_ID } from '../data/factions.js';
 import { getDistrictConfig } from '../world/districts.js';
 import { GOD_BY_ID } from '../world/gods.js';
+import {
+  getContactById,
+  getContactsByDistrict,
+  getContactVoiceLine,
+} from '../world/contacts.js';
 import {
   applyNarrativeEventEffects,
   getNarrativeEvent,
@@ -192,9 +198,7 @@ export default class GameScene extends Phaser.Scene {
 
   setupDomHud() {
     this.domHud = initDomHud(this.state, {
-      onCollectButcher: () => this.handleCollect('butcher'),
-      onCollectTavern: () => this.handleCollect('tavern'),
-      onCollectMarket: () => this.handleCollect('market'),
+      onCollectContact: (contactId) => this.handleCollect(contactId),
       onFeedPack: () => this.toggleFeedPanel(),
       onStabilizeCamp: () => this.handleStabilizeCamp(),
       onStartNight: () => this.handleStartNight(),
@@ -286,28 +290,22 @@ export default class GameScene extends Phaser.Scene {
         loc.text?.destroy();
       });
     }
-
     const locationsConfig = dayLocations || {};
-    this.locations = [
-      {
-        key: 'butcher',
-        label: 'Butcher',
-        color: 0xf87171,
-        ...locationsConfig.butcher,
-      },
-      {
-        key: 'tavern',
-        label: 'Tavern',
-        color: 0xfacc15,
-        ...locationsConfig.tavern,
-      },
-      {
-        key: 'market',
-        label: 'Market Stall',
-        color: 0x4ade80,
-        ...locationsConfig.market,
-      },
-    ];
+    const contacts = getContactsByDistrict(this.currentDistrict?.id).map((contact) => {
+      const location = locationsConfig[contact.legacySlot] || {};
+      const faction = FACTION_BY_ID[contact.factionId];
+      const color = faction?.color ? parseInt(faction.color.replace('#', ''), 16) : 0x38bdf8;
+      return {
+        key: contact.id,
+        contactId: contact.id,
+        label: contact.name,
+        color,
+        contact,
+        faction,
+        ...location,
+      };
+    });
+    this.locations = contacts;
 
     this.locations.forEach((loc) => {
       if (typeof loc.x !== 'number' || typeof loc.y !== 'number') {
@@ -468,9 +466,7 @@ export default class GameScene extends Phaser.Scene {
         : false;
     const shrineGod = nearestShrine ? GOD_BY_ID[nearestShrine.godId] : null;
     const context = {
-      nearButcher: this.isNearLocation('butcher'),
-      nearTavern: this.isNearLocation('tavern'),
-      nearMarket: this.isNearLocation('market'),
+      nearbyContact: this.getNearbyContact(),
       activePois: patrolPois.map((poi) => ({
         ...poi,
         distance: Phaser.Math.Distance.Between(this.player.x, this.player.y, poi.x, poi.y),
@@ -502,12 +498,30 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  isNearLocation(key) {
-    const loc = this.locations.find((location) => location.key === key);
-    if (!loc || typeof loc.x !== 'number' || typeof loc.y !== 'number') {
-      return false;
+  getNearbyContact() {
+    if (!Array.isArray(this.locations)) {
+      return null;
     }
-    return Phaser.Math.Distance.Between(this.player.x, this.player.y, loc.x, loc.y) <= INTERACT_RADIUS;
+    const nearby = this.locations
+      .map((location) => ({
+        location,
+        distance:
+          typeof location.x === 'number' && typeof location.y === 'number'
+            ? Phaser.Math.Distance.Between(
+              this.player.x,
+              this.player.y,
+              location.x,
+              location.y
+            )
+            : Infinity,
+      }))
+      .filter((entry) => entry.distance <= INTERACT_RADIUS);
+    if (nearby.length === 0) {
+      return null;
+    }
+    nearby.sort((a, b) => a.distance - b.distance);
+    const loc = nearby[0]?.location;
+    return loc?.contactId ? loc : null;
   }
 
   handleGatewayOverlap(gateway) {
@@ -590,13 +604,18 @@ export default class GameScene extends Phaser.Scene {
 
   handleCollect(locationKey) {
     if (collectLocation(this.state, locationKey)) {
-      const labels = {
-        butcher: 'Collected stores from the Butcher.',
-        tavern: 'Collected kegs from the Tavern.',
-        market: 'Collected supplies from the Market.',
-      };
-      addEvent(this.state, labels[locationKey] || 'Collected supplies.');
-      applyFactionInfluence(this.state, 'collect', { location: locationKey });
+      const contactData = getContactById(locationKey);
+      const contactName = contactData?.name || 'Contact';
+      addEvent(this.state, `Collected supplies from ${contactName}.`);
+      const voiceLine = getContactVoiceLine(contactData, this.state);
+      if (voiceLine) {
+        addEvent(this.state, `${contactName}: ${voiceLine}`);
+      }
+      applyFactionInfluence(this.state, 'collect', {
+        location: contactData?.legacySlot || locationKey,
+        contactId: locationKey,
+        factionId: contactData?.factionId,
+      });
       if (this.domHud) {
         this.domHud.hideFeedPanel();
       }
