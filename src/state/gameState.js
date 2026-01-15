@@ -432,7 +432,7 @@ export const createInitialState = () => ({
   clearedOvergrowthLastNight: false,
   activePoisByDistrict: createDistrictPois(),
   dayCollectedByDistrict: createDistrictCollections(),
-  currentDistrictId: 'heart',
+  currentDistrictId: 'camp',
   factions: createFactionStates(),
   worldFactions: FACTIONS,
   campFactions: {},

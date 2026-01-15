@@ -1,4 +1,52 @@
 export const DISTRICTS = {
+  camp: {
+    id: 'camp',
+    displayName: 'Camp',
+    background: {
+      imageKey: 'city',
+      color: 0x111827,
+      tint: 0x9ca3af,
+    },
+    spawn: { x: 520, y: 720 },
+    spawnAnchors: {
+      OVERGROWTH: [],
+      ROUTE: [],
+      RUCKUS: [],
+      LOT: [],
+    },
+    dayLocations: {},
+    shrineAnchors: [],
+    campStructures: [
+      {
+        id: 'stable',
+        label: 'Stable',
+        action: 'Tend the Pack',
+        x: 420,
+        y: 760,
+        color: 0x38bdf8,
+      },
+      {
+        id: 'house',
+        label: 'House',
+        action: 'Rest',
+        x: 680,
+        y: 600,
+        color: 0xfbbf24,
+      },
+    ],
+    gateways: [
+      {
+        x: 1700,
+        y: 520,
+        w: 240,
+        h: 200,
+        toDistrictId: 'heart',
+        spawnX: 260,
+        spawnY: 760,
+        label: 'Enter Jugol’s Rest',
+      },
+    ],
+  },
   heart: {
     id: 'heart',
     displayName: 'Heart District',
@@ -46,6 +94,16 @@ export const DISTRICTS = {
       { x: 560, y: 1020 },
     ],
     gateways: [
+      {
+        x: 240,
+        y: 920,
+        w: 240,
+        h: 200,
+        toDistrictId: 'camp',
+        spawnX: 1560,
+        spawnY: 620,
+        label: 'Exit to Camp',
+      },
       {
         x: 1850,
         y: 120,
@@ -216,7 +274,7 @@ export const DISTRICTS = {
 
 export const getDistrictConfig = (id) => {
   if (!id) {
-    return DISTRICTS.heart;
+    return DISTRICTS.camp;
   }
-  return DISTRICTS[id] || DISTRICTS.heart;
+  return DISTRICTS[id] || DISTRICTS.camp;
 };
