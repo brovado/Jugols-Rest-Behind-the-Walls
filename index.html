@@ -189,6 +189,7 @@
     #status-panel,
     #pack-panel,
     #meters-panel,
+    #population-panel,
     #controls-panel {
       display: flex;
       flex-direction: column;
@@ -420,6 +421,36 @@
     .status-value {
       color: #e2e8f0;
     }
+    .population-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 6px 12px;
+      font-size: 12px;
+    }
+    .population-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .population-bar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #cbd5f5;
+      font-size: 12px;
+    }
+    .population-bar-track {
+      height: 10px;
+      border-radius: 999px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      overflow: hidden;
+    }
+    .population-bar-fill {
+      height: 100%;
+      width: 0;
+      transition: width 0.2s ease;
+    }
     </style>
 </head>
 <body>
@@ -452,6 +483,10 @@
           Meters
           <span class="ui-dock-tab-badge" data-badge></span>
         </button>
+        <button class="ui-dock-tab" type="button" data-panel="population">
+          Population
+          <span class="ui-dock-tab-badge" data-badge></span>
+        </button>
         <button class="ui-dock-tab" type="button" data-panel="controls">
           Controls
           <span class="ui-dock-tab-badge" data-badge></span>
@@ -481,6 +516,13 @@
           <span class="panel-state-text" data-panel-state></span>
         </div>
         <div class="panel-body ui-drawer-body" id="meters-panel"></div>
+      </section>
+      <section id="panel-population" class="panel sidebar-panel ui-drawer" data-panel="population">
+        <div class="panel-header ui-drawer-header">
+          <span>Population</span>
+          <span class="panel-state-text" data-panel-state></span>
+        </div>
+        <div class="panel-body ui-drawer-body" id="population-panel"></div>
       </section>
       <section id="panel-controls" class="panel sidebar-panel ui-drawer" data-panel="controls">
         <div class="panel-header ui-drawer-header">
