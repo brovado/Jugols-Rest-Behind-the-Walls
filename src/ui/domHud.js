@@ -157,6 +157,13 @@ export const initDomHud = (state, callbacks) => {
   const poiList = createElement('div', 'poi-list');
   poiPanel.append(poiHeader, poiContext, poiList);
 
+  const getDistrictCollected = (stateSnapshot) =>
+    stateSnapshot.dayCollectedByDistrict?.[stateSnapshot.currentDistrictId] || {
+      butcher: false,
+      tavern: false,
+      market: false,
+    };
+
   const actionsConfig = [
     {
       id: 'collect_butcher',
@@ -165,7 +172,7 @@ export const initDomHud = (state, callbacks) => {
       visibleWhen: (stateSnapshot, context) =>
         stateSnapshot.phase === 'DAY' &&
         context.nearButcher &&
-        !stateSnapshot.locationCollected.butcher,
+        !getDistrictCollected(stateSnapshot).butcher,
       enabledWhen: (stateSnapshot) =>
         stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
       highlightWhen: (stateSnapshot, context) =>
@@ -178,7 +185,7 @@ export const initDomHud = (state, callbacks) => {
       visibleWhen: (stateSnapshot, context) =>
         stateSnapshot.phase === 'DAY' &&
         context.nearTavern &&
-        !stateSnapshot.locationCollected.tavern,
+        !getDistrictCollected(stateSnapshot).tavern,
       enabledWhen: (stateSnapshot) =>
         stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
       highlightWhen: (stateSnapshot, context) =>
@@ -191,7 +198,7 @@ export const initDomHud = (state, callbacks) => {
       visibleWhen: (stateSnapshot, context) =>
         stateSnapshot.phase === 'DAY' &&
         context.nearMarket &&
-        !stateSnapshot.locationCollected.market,
+        !getDistrictCollected(stateSnapshot).market,
       enabledWhen: (stateSnapshot) =>
         stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
       highlightWhen: (stateSnapshot, context) =>
