@@ -1,4 +1,5 @@
 import { getHyenaContribution } from '../state/gameState.js';
+import { getActiveFactions } from '../state/factionSystem.js';
 import { getDistrictConfig } from '../world/districts.js';
 import { getDomUI } from './domUI.js';
 import {
@@ -529,6 +530,12 @@ export const initDomHud = (state, callbacks) => {
     threatMeter.container
   );
 
+  const factionSection = createElement('div', 'hud-faction-section');
+  const factionHeader = createElement('div', 'hud-faction-header', 'City Pressure');
+  const factionList = createElement('div', 'hud-faction-list');
+  factionSection.append(factionHeader, factionList);
+  metersPanel.append(factionSection);
+
   const populationGrid = createElement('div', 'population-grid');
   const populationRows = {
     total: createPopulationRow('Total Population'),
@@ -736,6 +743,26 @@ export const initDomHud = (state, callbacks) => {
     overgrowthMeter.update(stateSnapshot.overgrowth, 100);
     campMeter.update(stateSnapshot.campPressure, 100);
     threatMeter.update(stateSnapshot.threatActive ? 100 : 0, 100);
+
+    const activeFactions = getActiveFactions(stateSnapshot);
+    factionList.innerHTML = '';
+    if (activeFactions.length === 0) {
+      factionList.append(
+        createElement('div', 'hud-faction-empty', 'No active factions.')
+      );
+    } else {
+      activeFactions.forEach((faction) => {
+        const row = createElement('div', 'hud-faction-row');
+        const icon = createElement('div', 'hud-faction-icon', faction.icon || '•');
+        const name = createElement('div', 'hud-faction-name', faction.name);
+        if (faction.color) {
+          icon.style.color = faction.color;
+          icon.style.borderColor = faction.color;
+        }
+        row.append(icon, name);
+        factionList.appendChild(row);
+      });
+    }
 
     const snapshot = {
       tension: stateSnapshot.tension,

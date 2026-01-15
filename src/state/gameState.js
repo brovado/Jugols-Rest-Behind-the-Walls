@@ -1,3 +1,4 @@
+import { createFactionStates, normalizeFactionStates } from '../data/factions.js';
 import { DISTRICTS, getDistrictConfig } from '../world/districts.js';
 
 const DAY_ACTIONS = 5;
@@ -240,6 +241,7 @@ export const createInitialState = () => ({
   activePoisByDistrict: createDistrictPois(),
   dayCollectedByDistrict: createDistrictCollections(),
   currentDistrictId: 'heart',
+  factions: createFactionStates(),
   victory: false,
   gameOver: false,
   eventLog: [],
@@ -278,6 +280,7 @@ export const loadGameState = () => {
       ...data,
       currentDistrictId: resolvedDistrictId,
       pack: normalizePack(data.pack),
+      factions: normalizeFactionStates(data.factions),
       dayCollectedByDistrict: {
         ...base.dayCollectedByDistrict,
         ...(data.dayCollectedByDistrict || {}),
