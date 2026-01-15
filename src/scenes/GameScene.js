@@ -229,8 +229,7 @@ export default class GameScene extends Phaser.Scene {
         y: this.worldBounds.height / 2,
       };
     if (this.textures.exists('player')) {
-      this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player');
-      this.player.setScale(0.5);
+      this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player', 0);
     } else {
       this.player = this.physics.add
         .sprite(spawn.x, spawn.y, null)
@@ -238,6 +237,12 @@ export default class GameScene extends Phaser.Scene {
       this.player.setTint(0xfbbf24);
     }
     this.player.setOrigin(0, 1);
+    if (this.player.body) {
+      this.player.body.setSize(10, 10);
+      const bodyOffsetX = (this.player.width - 10) / 2;
+      const bodyOffsetY = this.player.height - 10;
+      this.player.body.setOffset(bodyOffsetX, bodyOffsetY);
+    }
     this.player.setCollideWorldBounds(true);
     this.player.setDepth(10);
     if (this.mapLayers.walls) {
