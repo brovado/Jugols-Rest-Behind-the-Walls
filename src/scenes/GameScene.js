@@ -14,6 +14,7 @@ import {
   saveGameState,
   loadGameState,
 } from '../state/gameState.js';
+import { applyFactionInfluence } from '../state/factionSystem.js';
 import { getDomUI } from '../ui/domUI.js';
 import { initDomHud } from '../ui/domHud.js';
 import { setPanelActive } from '../ui/panelDock.js';
@@ -536,6 +537,7 @@ export default class GameScene extends Phaser.Scene {
         market: 'Collected supplies from the Market.',
       };
       addEvent(this.state, labels[locationKey] || 'Collected supplies.');
+      applyFactionInfluence(this.state, 'collect', { location: locationKey });
       if (this.domHud) {
         this.domHud.hideFeedPanel();
       }
@@ -561,6 +563,7 @@ export default class GameScene extends Phaser.Scene {
         this.domHud.hideFeedPanel();
         this.domHud.playFeedAnimations(feedPlan);
       }
+      applyFactionInfluence(this.state, 'feed');
       this.updateHud();
     }
   }
@@ -572,6 +575,7 @@ export default class GameScene extends Phaser.Scene {
       if (result.moved > 0) {
         addEvent(this.state, `Stabilized camp: Moved ${result.moved} into housing.`);
       }
+      applyFactionInfluence(this.state, 'stabilize_camp');
       this.updateHud();
     }
   }
@@ -584,6 +588,7 @@ export default class GameScene extends Phaser.Scene {
     startNight(this.state);
     spawnPoisForNight(this.state, this.currentDistrict);
     addEvent(this.state, 'Night falls over Jugol’s Rest.');
+    applyFactionInfluence(this.state, 'start_night');
     saveGameState(this.state);
     if (this.domHud) {
       this.domHud.hideFeedPanel();
@@ -617,6 +622,7 @@ export default class GameScene extends Phaser.Scene {
     endNight(this.state);
     addEvent(this.state, 'Dawn breaks, the watch rotates.');
     spawnPoisForDay(this.state);
+    applyFactionInfluence(this.state, 'end_night');
     saveGameState(this.state);
     this.playPhaseTransition(previousPhase, this.state.phase);
     this.syncPoiMarkers(true);
@@ -742,6 +748,7 @@ export default class GameScene extends Phaser.Scene {
       this.state.housingCapacity += 1;
       this.state.clearedOvergrowthTonight = true;
       addEvent(this.state, 'Cleared overgrowth: Housing capacity +1.');
+      applyFactionInfluence(this.state, 'clear_overgrowth', { poiSeverity: poi.severity });
     }
 
     if (type === 'ROUTE') {
@@ -752,6 +759,7 @@ export default class GameScene extends Phaser.Scene {
       this.state.packStamina -= cost;
       this.state.routeGuardedTonight = true;
       addEvent(this.state, 'Patrolled the route through the ruins.');
+      applyFactionInfluence(this.state, 'guard_route', { poiSeverity: poi.severity });
     }
 
     if (type === 'RUCKUS') {
@@ -765,6 +773,7 @@ export default class GameScene extends Phaser.Scene {
       );
       this.state.threatActive = false;
       addEvent(this.state, 'Suppressed a ruckus: tension eased.');
+      applyFactionInfluence(this.state, 'suppress_threat', { poiSeverity: poi.severity });
     }
 
     if (type === 'LOT') {
@@ -776,6 +785,7 @@ export default class GameScene extends Phaser.Scene {
       this.state.housingCapacity += 2;
       this.state.campPressure = clampMeter(this.state.campPressure - 10);
       addEvent(this.state, 'Secured a lot: Housing capacity +2.');
+      applyFactionInfluence(this.state, 'secure_lot', { poiSeverity: poi.severity });
     }
 
     const resolved = resolvePoi(this.state, poi.id);
