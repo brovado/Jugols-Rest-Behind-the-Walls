@@ -229,8 +229,11 @@ export default class GameScene extends Phaser.Scene {
         y: this.worldBounds.height / 2,
       };
     if (this.textures.exists('player')) {
-      this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player');
-      this.player.setScale(0.5);
+      this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player', 0);
+      if (this.player.body) {
+        this.player.body.setSize(10, 10);
+        this.player.body.setOffset(3, 6);
+      }
     } else {
       this.player = this.physics.add
         .sprite(spawn.x, spawn.y, null)
