@@ -310,8 +310,17 @@
  "tileheight":16,
  "tilesets":[
         {
+         "columns":57,
          "firstgid":1,
-         "source":"..\/tilesets\/tile6.tsx"
+         "image":"..\/images\/roguelikeSheet_transparent.png",
+         "imageheight":526,
+         "imagewidth":968,
+         "margin":0,
+         "name":"tile6",
+         "spacing":1,
+         "tilecount":1767,
+         "tileheight":16,
+         "tilewidth":16
         }],
  "tilewidth":16,
  "type":"map",
