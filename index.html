@@ -188,6 +188,7 @@
     #actions-panel,
     #status-panel,
     #pack-panel,
+    #feed-panel,
     #meters-panel,
     #population-panel,
     #controls-panel {
@@ -479,6 +480,10 @@
           Pack
           <span class="ui-dock-tab-badge" data-badge></span>
         </button>
+        <button class="ui-dock-tab" type="button" data-panel="feed">
+          Feed
+          <span class="ui-dock-tab-badge" data-badge></span>
+        </button>
         <button class="ui-dock-tab" type="button" data-panel="meters">
           Meters
           <span class="ui-dock-tab-badge" data-badge></span>
@@ -509,6 +514,13 @@
           <span class="panel-state-text" data-panel-state></span>
         </div>
         <div class="panel-body ui-drawer-body" id="pack-panel"></div>
+      </section>
+      <section id="panel-feed" class="panel sidebar-panel ui-drawer" data-panel="feed">
+        <div class="panel-header ui-drawer-header">
+          <span>Feed</span>
+          <span class="panel-state-text" data-panel-state></span>
+        </div>
+        <div class="panel-body ui-drawer-body" id="feed-panel"></div>
       </section>
       <section id="panel-meters" class="panel sidebar-panel ui-drawer" data-panel="meters">
         <div class="panel-header ui-drawer-header">

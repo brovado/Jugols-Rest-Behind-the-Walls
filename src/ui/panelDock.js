@@ -17,6 +17,14 @@ const DEFAULT_PANELS = {
     disabled: false,
     stateText: '',
   },
+  feed: {
+    open: false,
+    dirty: false,
+    dirtyCount: 0,
+    active: false,
+    disabled: false,
+    stateText: '',
+  },
   meters: {
     open: true,
     dirty: false,
