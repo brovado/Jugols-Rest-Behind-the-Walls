@@ -18,6 +18,7 @@ import { getDomUI } from '../ui/domUI.js';
 import { initDomHud } from '../ui/domHud.js';
 import { setPanelActive } from '../ui/panelDock.js';
 import { moveToward } from '../utils/pathing.js';
+import { getDistrictConfig } from '../world/districts.js';
 
 const WORLD_WIDTH = 2000;
 const WORLD_HEIGHT = 1200;
@@ -44,6 +45,11 @@ export default class GameScene extends Phaser.Scene {
     this.poiMarkers = new Map();
     this.poiLayer = null;
     this.poiPulseTweens = new Map();
+    this.backgroundLayer = null;
+    this.gatewayLayer = null;
+    this.gatewayZones = [];
+    this.currentDistrict = null;
+    this.isTransitioning = false;
   }
 
   create(data = {}) {
@@ -53,12 +59,16 @@ export default class GameScene extends Phaser.Scene {
     if (!this.state) {
       this.state = createInitialState();
       startDay(this.state, { advanceDay: false });
-      addEvent(this.state, 'Day 1 begins in the Heart District.');
     } else if (data.loadSave) {
       addEvent(this.state, 'The watch resumes from the last report.');
     }
+    this.currentDistrict = getDistrictConfig(this.state.currentDistrictId);
+    this.state.currentDistrictId = this.currentDistrict.id;
+    if (!this.state.eventLog?.length) {
+      addEvent(this.state, `Day 1 begins in the ${this.currentDistrict.displayName}.`);
+    }
     if (this.state.phase === 'NIGHT' && this.state.activePois?.length === 0) {
-      spawnPoisForNight(this.state);
+      spawnPoisForNight(this.state, this.currentDistrict);
     }
 
     this.setupWorld();
@@ -82,15 +92,8 @@ export default class GameScene extends Phaser.Scene {
   setupWorld() {
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
-    if (this.textures.exists('city')) {
-      const bg = this.add.image(0, 0, 'city').setOrigin(0, 0);
-      bg.setDisplaySize(WORLD_WIDTH, WORLD_HEIGHT);
-    } else {
-      this.add.rectangle(0, 0, WORLD_WIDTH, WORLD_HEIGHT, 0x1f2937).setOrigin(0, 0);
-    }
-
-    this.createLocations();
+    this.updateDistrictBackground(this.currentDistrict);
+    this.createLocations(this.currentDistrict?.dayLocations);
   }
 
   setupPlayer() {
@@ -112,6 +115,8 @@ export default class GameScene extends Phaser.Scene {
       left: 'A',
       right: 'D',
     });
+
+    this.setupGateways(this.currentDistrict?.gateways);
   }
 
   setupMarkers() {
@@ -228,14 +233,40 @@ export default class GameScene extends Phaser.Scene {
     this.gameOverOverlay.add([overBg, overText]);
   }
 
-  createLocations() {
+  createLocations(dayLocations) {
+    if (Array.isArray(this.locations)) {
+      this.locations.forEach((loc) => {
+        loc.marker?.destroy();
+        loc.text?.destroy();
+      });
+    }
+
+    const locationsConfig = dayLocations || {};
     this.locations = [
-      { key: 'butcher', label: 'Butcher', x: 350, y: 260, color: 0xf87171 },
-      { key: 'tavern', label: 'Tavern', x: 880, y: 320, color: 0xfacc15 },
-      { key: 'market', label: 'Market Stall', x: 620, y: 720, color: 0x4ade80 },
+      {
+        key: 'butcher',
+        label: 'Butcher',
+        color: 0xf87171,
+        ...locationsConfig.butcher,
+      },
+      {
+        key: 'tavern',
+        label: 'Tavern',
+        color: 0xfacc15,
+        ...locationsConfig.tavern,
+      },
+      {
+        key: 'market',
+        label: 'Market Stall',
+        color: 0x4ade80,
+        ...locationsConfig.market,
+      },
     ];
 
     this.locations.forEach((loc) => {
+      if (typeof loc.x !== 'number' || typeof loc.y !== 'number') {
+        return;
+      }
       loc.marker = this.add.circle(loc.x, loc.y, 18, loc.color, 0.9);
       loc.text = this.add.text(loc.x, loc.y - 32, loc.label, {
         fontSize: '14px',
@@ -244,6 +275,79 @@ export default class GameScene extends Phaser.Scene {
         padding: { x: 4, y: 2 },
       }).setOrigin(0.5);
     });
+  }
+
+  updateDistrictBackground(districtConfig) {
+    if (this.backgroundLayer) {
+      this.backgroundLayer.destroy();
+    }
+    this.backgroundLayer = this.add.container(0, 0).setDepth(-20);
+    const background = districtConfig?.background || {};
+    const imageKey = background.imageKey;
+    if (imageKey && this.textures.exists(imageKey)) {
+      const bg = this.add.image(0, 0, imageKey).setOrigin(0, 0);
+      bg.setDisplaySize(WORLD_WIDTH, WORLD_HEIGHT);
+      if (background.tint) {
+        bg.setTint(background.tint);
+      }
+      this.backgroundLayer.add(bg);
+    } else {
+      const fill = background.color ?? 0x1f2937;
+      const rect = this.add.rectangle(0, 0, WORLD_WIDTH, WORLD_HEIGHT, fill);
+      rect.setOrigin(0, 0);
+      this.backgroundLayer.add(rect);
+    }
+  }
+
+  setupGateways(gateways) {
+    this.clearGateways();
+    if (!Array.isArray(gateways)) {
+      return;
+    }
+
+    if (!this.gatewayLayer) {
+      this.gatewayLayer = this.add.container(0, 0).setDepth(20);
+    } else {
+      this.gatewayLayer.removeAll(true);
+    }
+
+    gateways.forEach((gateway) => {
+      const rect = this.add.rectangle(gateway.x, gateway.y, gateway.w, gateway.h, 0x38bdf8, 0.08);
+      rect.setOrigin(0, 0);
+      rect.setStrokeStyle(2, 0x38bdf8, 0.6);
+      const label = this.add.text(
+        gateway.x + gateway.w / 2,
+        gateway.y - 12,
+        gateway.label,
+        {
+          fontSize: '12px',
+          color: '#e2e8f0',
+          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          padding: { x: 6, y: 2 },
+        }
+      ).setOrigin(0.5, 1);
+      this.gatewayLayer.add([rect, label]);
+
+      const zone = this.add.zone(
+        gateway.x + gateway.w / 2,
+        gateway.y + gateway.h / 2,
+        gateway.w,
+        gateway.h
+      );
+      this.physics.add.existing(zone, true);
+      const collider = this.physics.add.overlap(this.player, zone, () =>
+        this.handleGatewayOverlap(gateway)
+      );
+      this.gatewayZones.push({ zone, collider });
+    });
+  }
+
+  clearGateways() {
+    this.gatewayZones.forEach((entry) => {
+      entry.collider?.destroy();
+      entry.zone?.destroy();
+    });
+    this.gatewayZones = [];
   }
 
   update(time, delta) {
@@ -340,10 +444,65 @@ export default class GameScene extends Phaser.Scene {
 
   isNearLocation(key) {
     const loc = this.locations.find((location) => location.key === key);
-    if (!loc) {
+    if (!loc || typeof loc.x !== 'number' || typeof loc.y !== 'number') {
       return false;
     }
     return Phaser.Math.Distance.Between(this.player.x, this.player.y, loc.x, loc.y) <= INTERACT_RADIUS;
+  }
+
+  handleGatewayOverlap(gateway) {
+    if (this.isTransitioning || this.inputLocked) {
+      return;
+    }
+    if (!gateway || gateway.toDistrictId === this.state.currentDistrictId) {
+      return;
+    }
+    this.transitionToDistrict(gateway);
+  }
+
+  transitionToDistrict(gateway) {
+    if (!gateway) {
+      return;
+    }
+    const nextDistrict = getDistrictConfig(gateway.toDistrictId);
+    this.isTransitioning = true;
+    this.inputLocked = true;
+    if (this.domHud) {
+      this.domHud.setInteractionLocked(true);
+    }
+    this.resetTarget();
+    this.appendLog(`Approaching ${nextDistrict.displayName}...`);
+    this.cameras.main.fadeOut(350, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.applyDistrictTransition(gateway, nextDistrict);
+      this.cameras.main.fadeIn(350, 0, 0, 0);
+      this.cameras.main.once('camerafadeincomplete', () => {
+        this.isTransitioning = false;
+        this.inputLocked = false;
+        if (this.domHud) {
+          this.domHud.setInteractionLocked(false);
+        }
+      });
+    });
+  }
+
+  applyDistrictTransition(gateway, districtConfig) {
+    this.state.currentDistrictId = districtConfig.id;
+    this.currentDistrict = districtConfig;
+    this.updateDistrictBackground(districtConfig);
+    this.createLocations(districtConfig.dayLocations);
+    this.setupGateways(districtConfig.gateways);
+    this.player.setPosition(gateway.spawnX, gateway.spawnY);
+    this.lastPosition = { x: gateway.spawnX, y: gateway.spawnY };
+
+    if (this.state.phase === 'NIGHT') {
+      spawnPoisForNight(this.state, districtConfig);
+    } else {
+      spawnPoisForDay(this.state);
+    }
+    addEvent(this.state, `Entered ${districtConfig.displayName}.`);
+    this.syncPoiMarkers(true);
+    this.updateHud();
   }
 
   playPhaseTransition(fromPhase, toPhase) {
@@ -425,7 +584,7 @@ export default class GameScene extends Phaser.Scene {
     }
     const previousPhase = this.state.phase;
     startNight(this.state);
-    spawnPoisForNight(this.state);
+    spawnPoisForNight(this.state, this.currentDistrict);
     addEvent(this.state, 'Night falls over Jugol’s Rest.');
     saveGameState(this.state);
     if (this.domHud) {

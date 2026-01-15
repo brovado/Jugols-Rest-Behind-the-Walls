@@ -1,3 +1,5 @@
+import { getDistrictConfig } from '../world/districts.js';
+
 const DAY_ACTIONS = 5;
 const BASE_INCOMING = 3;
 const BURST_INTERVAL = 3;
@@ -66,29 +68,8 @@ const createPack = () => ([
 const POI_RADIUS = 60;
 const POI_TYPES = ['OVERGROWTH', 'RUCKUS', 'ROUTE', 'LOT'];
 
-const NIGHT_POI_POINTS = {
-  OVERGROWTH: [
-    { x: 1380, y: 220 },
-    { x: 1540, y: 410 },
-    { x: 1220, y: 520 },
-    { x: 1640, y: 640 },
-    { x: 1180, y: 320 },
-  ],
-  ROUTE: [
-    { x: 1260, y: 610 },
-    { x: 1500, y: 520 },
-    { x: 1060, y: 700 },
-  ],
-  RUCKUS: [
-    { x: 1100, y: 890 },
-    { x: 1400, y: 900 },
-    { x: 1280, y: 980 },
-  ],
-  LOT: [
-    { x: 1520, y: 760 },
-    { x: 1200, y: 840 },
-  ],
-};
+const getNightPoiPoints = (districtConfig) =>
+  districtConfig?.spawnAnchors || getDistrictConfig('heart').spawnAnchors;
 
 const createPoi = (state, type, point, index, severity) => ({
   id: `poi-${state.dayNumber}-${state.phase}-${type}-${index}`,
@@ -222,6 +203,7 @@ export const createInitialState = () => ({
     tavern: false,
     market: false,
   },
+  currentDistrictId: 'heart',
   victory: false,
   gameOver: false,
   eventLog: [],
@@ -254,9 +236,11 @@ export const loadGameState = () => {
     }
     const base = createInitialState();
     const data = JSON.parse(raw);
+    const resolvedDistrictId = getDistrictConfig(data.currentDistrictId).id;
     const merged = {
       ...base,
       ...data,
+      currentDistrictId: resolvedDistrictId,
       pack: normalizePack(data.pack),
       locationCollected: {
         ...base.locationCollected,
@@ -288,18 +272,23 @@ export const spawnPoisForDay = (state) => {
   return state.activePois;
 };
 
-export const spawnPoisForNight = (state) => {
+export const spawnPoisForNight = (state, districtConfig) => {
+  const anchors = getNightPoiPoints(
+    districtConfig || getDistrictConfig(state.currentDistrictId)
+  );
   const nextPois = [];
   const routeSeed = state.dayNumber * 3;
-  const routePoint = pickPoints(NIGHT_POI_POINTS.ROUTE, 1, routeSeed)[0];
+  const routePoint = pickPoints(anchors.ROUTE, 1, routeSeed)[0];
   if (routePoint) {
     nextPois.push(createPoi(state, 'ROUTE', routePoint, routeSeed, 1 + (state.dayNumber % 2)));
   }
 
-  const overgrowthCount = getOvergrowthCount(state.overgrowth);
+  const baseOvergrowthCount = getOvergrowthCount(state.overgrowth);
+  const overgrowthBonus = districtConfig?.nightModifiers?.overgrowthBonus ?? 0;
+  const overgrowthCount = baseOvergrowthCount + overgrowthBonus;
   const overgrowthSeverity = getOvergrowthSeverity(state.overgrowth);
   const overgrowthPoints = pickPoints(
-    NIGHT_POI_POINTS.OVERGROWTH,
+    anchors.OVERGROWTH,
     overgrowthCount,
     state.dayNumber * 5 + state.overgrowth
   );
@@ -312,10 +301,12 @@ export const spawnPoisForNight = (state) => {
   const shouldSpawnRuckus =
     state.tension >= 60 || state.campPop > 0 || state.threatActive;
   if (shouldSpawnRuckus) {
-    const ruckusCount = state.tension >= 80 ? 2 : 1;
+    const baseRuckusCount = state.tension >= 80 ? 2 : 1;
+    const ruckusBonus = districtConfig?.nightModifiers?.ruckusBonus ?? 0;
+    const ruckusCount = baseRuckusCount + ruckusBonus;
     const ruckusSeverity = getRuckusSeverity(state.tension);
     const ruckusPoints = pickPoints(
-      NIGHT_POI_POINTS.RUCKUS,
+      anchors.RUCKUS,
       ruckusCount,
       state.dayNumber * 7 + state.tension
     );
@@ -329,7 +320,7 @@ export const spawnPoisForNight = (state) => {
   const needsLotReward =
     state.clearedOvergrowthLastNight || getAvailableHousing(state) <= 0;
   if (needsLotReward) {
-    const lotPoint = pickPoints(NIGHT_POI_POINTS.LOT, 1, state.dayNumber * 11)[0];
+    const lotPoint = pickPoints(anchors.LOT, 1, state.dayNumber * 11)[0];
     if (lotPoint) {
       nextPois.push(createPoi(state, 'LOT', lotPoint, state.dayNumber, 1));
     }

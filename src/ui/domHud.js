@@ -1,4 +1,5 @@
 import { getHyenaContribution } from '../state/gameState.js';
+import { getDistrictConfig } from '../world/districts.js';
 import { getDomUI } from './domUI.js';
 import {
   isPanelOpen,
@@ -142,8 +143,9 @@ export const initDomHud = (state, callbacks) => {
   const hudStatus = createElement('div', 'hud-status');
   const hudStatusRow = createElement('div', 'hud-status-row');
   const dayText = createElement('div', null, 'Day 1');
+  const districtBadge = createElement('div', 'hud-phase-badge', 'Heart District');
   const phaseBadge = createElement('div', 'hud-phase-badge hud-phase-day', 'DAY');
-  hudStatusRow.append(dayText, phaseBadge);
+  hudStatusRow.append(dayText, districtBadge, phaseBadge);
 
   const statusText = createElement('div', 'status-value', '');
   hudStatus.append(hudStatusRow, statusText);
@@ -605,6 +607,8 @@ export const initDomHud = (state, callbacks) => {
 
   const updateTopStatus = (stateSnapshot) => {
     dayText.textContent = `Day ${stateSnapshot.dayNumber}`;
+    const district = getDistrictConfig(stateSnapshot.currentDistrictId);
+    districtBadge.textContent = district.displayName;
     phaseBadge.textContent = stateSnapshot.phase;
     phaseBadge.classList.toggle('hud-phase-day', stateSnapshot.phase === 'DAY');
     phaseBadge.classList.toggle('hud-phase-night', stateSnapshot.phase === 'NIGHT');
