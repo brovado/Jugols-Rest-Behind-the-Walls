@@ -78,6 +78,10 @@ export default class GameScene extends Phaser.Scene {
     this.poiLayer = null;
     this.poiPulseTweens = new Map();
     this.backgroundLayer = null;
+    this.map = null;
+    this.mapLayers = {};
+    this.mapSpawn = null;
+    this.worldBounds = { width: WORLD_WIDTH, height: WORLD_HEIGHT };
     this.gatewayLayer = null;
     this.gatewayZones = [];
     this.currentDistrict = null;
@@ -138,16 +142,53 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupWorld() {
-    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-    this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.setupTilemap();
+    this.cameras.main.setBounds(0, 0, this.worldBounds.width, this.worldBounds.height);
+    this.physics.world.setBounds(0, 0, this.worldBounds.width, this.worldBounds.height);
     this.updateDistrictBackground(this.currentDistrict);
     this.createLocations(this.currentDistrict?.dayLocations);
     this.createStructures(this.currentDistrict?.campStructures);
     this.createCampNpcs(this.currentDistrict?.campNpcs);
   }
 
+  setupTilemap() {
+    this.map = null;
+    this.mapLayers = {};
+    this.mapSpawn = null;
+    this.worldBounds = { width: WORLD_WIDTH, height: WORLD_HEIGHT };
+    if (!this.cache.tilemap.exists('heart_district')) {
+      return;
+    }
+
+    const map = this.make.tilemap({ key: 'heart_district' });
+    const tileset = map.addTilesetImage('tile6', 'roguelikeSheet');
+    if (!tileset) {
+      return;
+    }
+
+    const groundLayer = map.createLayer('Ground', tileset, 0, 0);
+    const wallsLayer = map.createLayer('Walls', tileset, 0, 0);
+    const overlayLayer = map.createLayer('Overlays', tileset, 0, 0);
+
+    if (groundLayer) {
+      groundLayer.setDepth(0);
+    }
+    if (wallsLayer) {
+      wallsLayer.setDepth(5);
+      wallsLayer.setCollisionByExclusion([-1]);
+    }
+    if (overlayLayer) {
+      overlayLayer.setDepth(15);
+    }
+
+    this.map = map;
+    this.mapLayers = { ground: groundLayer, walls: wallsLayer, overlays: overlayLayer };
+    this.worldBounds = { width: map.widthInPixels, height: map.heightInPixels };
+    this.mapSpawn = { x: map.tileWidth * 4, y: map.tileHeight * 4 };
+  }
+
   setupPlayer() {
-    const spawn = this.currentDistrict?.spawn || { x: 400, y: 500 };
+    const spawn = this.mapSpawn || this.currentDistrict?.spawn || { x: 400, y: 500 };
     if (this.textures.exists('player')) {
       this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player');
       this.player.setScale(0.5);
@@ -158,6 +199,10 @@ export default class GameScene extends Phaser.Scene {
       this.player.setTint(0xfbbf24);
     }
     this.player.setCollideWorldBounds(true);
+    this.player.setDepth(10);
+    if (this.mapLayers.walls) {
+      this.physics.add.collider(this.player, this.mapLayers.walls);
+    }
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
     this.cursors = this.input.keyboard.addKeys({
@@ -440,14 +485,14 @@ export default class GameScene extends Phaser.Scene {
     const imageKey = background.imageKey;
     if (imageKey && this.textures.exists(imageKey)) {
       const bg = this.add.image(0, 0, imageKey).setOrigin(0, 0);
-      bg.setDisplaySize(WORLD_WIDTH, WORLD_HEIGHT);
+      bg.setDisplaySize(this.worldBounds.width, this.worldBounds.height);
       if (background.tint) {
         bg.setTint(background.tint);
       }
       this.backgroundLayer.add(bg);
     } else {
       const fill = background.color ?? 0x1f2937;
-      const rect = this.add.rectangle(0, 0, WORLD_WIDTH, WORLD_HEIGHT, fill);
+      const rect = this.add.rectangle(0, 0, this.worldBounds.width, this.worldBounds.height, fill);
       rect.setOrigin(0, 0);
       this.backgroundLayer.add(rect);
     }
@@ -521,21 +566,23 @@ export default class GameScene extends Phaser.Scene {
     const speed = PLAYER_SPEED;
     const deltaSeconds = delta / 1000;
     let movedWithKeys = false;
+    let nextX = this.player.x;
+    let nextY = this.player.y;
 
     if (this.cursors.left.isDown) {
-      this.player.x -= speed * deltaSeconds;
+      nextX -= speed * deltaSeconds;
       movedWithKeys = true;
     }
     if (this.cursors.right.isDown) {
-      this.player.x += speed * deltaSeconds;
+      nextX += speed * deltaSeconds;
       movedWithKeys = true;
     }
     if (this.cursors.up.isDown) {
-      this.player.y -= speed * deltaSeconds;
+      nextY -= speed * deltaSeconds;
       movedWithKeys = true;
     }
     if (this.cursors.down.isDown) {
-      this.player.y += speed * deltaSeconds;
+      nextY += speed * deltaSeconds;
       movedWithKeys = true;
     }
 
@@ -544,7 +591,8 @@ export default class GameScene extends Phaser.Scene {
       this.targetMarker.setVisible(false);
     } else if (this.targetPoint) {
       const next = moveToward(this.player, this.targetPoint, speed, deltaSeconds);
-      this.player.setPosition(next.x, next.y);
+      nextX = next.x;
+      nextY = next.y;
       if (next.arrived) {
         this.targetPoint = null;
         this.targetMarker.setVisible(false);
@@ -552,8 +600,52 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    this.player.x = Phaser.Math.Clamp(this.player.x, 0, WORLD_WIDTH);
-    this.player.y = Phaser.Math.Clamp(this.player.y, 0, WORLD_HEIGHT);
+    const constrained = this.constrainToWalls(nextX, nextY);
+    const bounded = this.clampToWorld(constrained.x, constrained.y);
+    this.player.setPosition(bounded.x, bounded.y);
+  }
+
+  clampToWorld(x, y) {
+    return {
+      x: Phaser.Math.Clamp(x, 0, this.worldBounds.width),
+      y: Phaser.Math.Clamp(y, 0, this.worldBounds.height),
+    };
+  }
+
+  constrainToWalls(nextX, nextY) {
+    const wallsLayer = this.mapLayers.walls;
+    if (!wallsLayer) {
+      return { x: nextX, y: nextY };
+    }
+
+    let resolvedX = nextX;
+    let resolvedY = nextY;
+
+    if (this.isPositionBlocked(resolvedX, this.player.y, wallsLayer)) {
+      resolvedX = this.player.x;
+    }
+    if (this.isPositionBlocked(resolvedX, resolvedY, wallsLayer)) {
+      resolvedY = this.player.y;
+    }
+
+    return { x: resolvedX, y: resolvedY };
+  }
+
+  isPositionBlocked(x, y, wallsLayer) {
+    const body = this.player.body;
+    const halfWidth = body?.width ? body.width / 2 : this.player.displayWidth / 2;
+    const halfHeight = body?.height ? body.height / 2 : this.player.displayHeight / 2;
+    const points = [
+      { x: x - halfWidth, y: y - halfHeight },
+      { x: x + halfWidth, y: y - halfHeight },
+      { x: x - halfWidth, y: y + halfHeight },
+      { x: x + halfWidth, y: y + halfHeight },
+    ];
+
+    return points.some((point) => {
+      const tile = wallsLayer.getTileAtWorldXY(point.x, point.y);
+      return tile && tile.collides;
+    });
   }
 
   updateHud() {
