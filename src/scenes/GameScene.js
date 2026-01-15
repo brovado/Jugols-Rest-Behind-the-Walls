@@ -19,7 +19,7 @@ import {
 import { applyFactionInfluence } from '../state/factionSystem.js';
 import { getDomUI } from '../ui/domUI.js';
 import { initDomHud } from '../ui/domHud.js';
-import { setPanelActive } from '../ui/panelDock.js';
+import { setPanelOpen } from '../ui/panelDock.js';
 import { moveToward } from '../utils/pathing.js';
 import { getAmbientLine } from '../world/ambient.js';
 import {
@@ -74,6 +74,9 @@ export default class GameScene extends Phaser.Scene {
     this.gatewayZones = [];
     this.currentDistrict = null;
     this.isTransitioning = false;
+    this.structureMarkers = [];
+    this.currentInteractable = null;
+    this.interactKey = null;
   }
 
   create(data = {}) {
@@ -119,15 +122,17 @@ export default class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.updateDistrictBackground(this.currentDistrict);
     this.createLocations(this.currentDistrict?.dayLocations);
+    this.createStructures(this.currentDistrict?.campStructures);
   }
 
   setupPlayer() {
+    const spawn = this.currentDistrict?.spawn || { x: 400, y: 500 };
     if (this.textures.exists('player')) {
-      this.player = this.physics.add.sprite(400, 500, 'player');
+      this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player');
       this.player.setScale(0.5);
     } else {
       this.player = this.physics.add
-        .sprite(400, 500, null)
+        .sprite(spawn.x, spawn.y, null)
         .setDisplaySize(32, 32);
       this.player.setTint(0xfbbf24);
     }
@@ -156,6 +161,10 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupInput() {
+    this.interactKey = this.input.keyboard.addKey('F');
+    this.interactKey.on('down', () => {
+      this.handleInteract();
+    });
     this.input.on('pointerdown', (pointer) => {
       if (this.state.victory || this.state.gameOver) {
         return;
@@ -198,16 +207,6 @@ export default class GameScene extends Phaser.Scene {
 
   setupDomHud() {
     this.domHud = initDomHud(this.state, {
-      onCollectContact: (contactId) => this.handleCollect(contactId),
-      onFeedPack: () => this.toggleFeedPanel(),
-      onStabilizeCamp: () => this.handleStabilizeCamp(),
-      onStartNight: () => this.handleStartNight(),
-      onClearOvergrowth: () => this.handleClearOvergrowth(),
-      onGuardRoute: () => this.handleGuardRoute(),
-      onSuppressThreat: () => this.handleSuppressThreat(),
-      onSecureLot: () => this.handleSecureLot(),
-      onPrayAtShrine: () => this.handlePray(),
-      onEndNight: () => this.handleEndNight(),
       onConfirmFeed: (feedPlan) => this.handleFeed(feedPlan),
     });
   }
@@ -318,6 +317,40 @@ export default class GameScene extends Phaser.Scene {
         backgroundColor: 'rgba(15, 23, 42, 0.6)',
         padding: { x: 4, y: 2 },
       }).setOrigin(0.5);
+    });
+  }
+
+  createStructures(structures) {
+    if (Array.isArray(this.structureMarkers)) {
+      this.structureMarkers.forEach((entry) => {
+        entry.marker?.destroy();
+        entry.text?.destroy();
+      });
+    }
+    this.structureMarkers = [];
+    if (!Array.isArray(structures)) {
+      return;
+    }
+
+    structures.forEach((structure) => {
+      if (typeof structure.x !== 'number' || typeof structure.y !== 'number') {
+        return;
+      }
+      const color = structure.color ?? 0x38bdf8;
+      const marker = this.add.rectangle(structure.x, structure.y, 44, 44, color, 0.3);
+      marker.setStrokeStyle(2, color, 0.8);
+      const text = this.add.text(structure.x, structure.y - 32, structure.label, {
+        fontSize: '14px',
+        color: '#f8fafc',
+        backgroundColor: 'rgba(15, 23, 42, 0.6)',
+        padding: { x: 4, y: 2 },
+      }).setOrigin(0.5);
+      this.structureMarkers.push({
+        ...structure,
+        marker,
+        text,
+        radius: structure.radius || INTERACT_RADIUS,
+      });
     });
   }
 
@@ -479,16 +512,18 @@ export default class GameScene extends Phaser.Scene {
       nearestShrineInRange,
       shrineGod,
     };
+    const interaction = this.getNearestInteractable(context);
+    this.currentInteractable = interaction?.interactable || null;
+    context.interactionPrompt = interaction
+      ? {
+        text: interaction.text,
+        reason: interaction.reason,
+        enabled: interaction.canInteract,
+      }
+      : null;
     if (this.domHud) {
       this.domHud.update(this.state, context);
     }
-
-    setPanelActive(
-      'actions',
-      this.state.phase === 'DAY'
-        ? this.state.dayActionsRemaining > 0
-        : this.state.packStamina > 0
-    );
 
     if (this.state.victory) {
       this.victoryOverlay.setVisible(true);
@@ -522,6 +557,177 @@ export default class GameScene extends Phaser.Scene {
     nearby.sort((a, b) => a.distance - b.distance);
     const loc = nearby[0]?.location;
     return loc?.contactId ? loc : null;
+  }
+
+  getNearestInteractable(context) {
+    if (!this.player) {
+      return null;
+    }
+    const candidates = [];
+    const addCandidate = (candidate) => {
+      if (!candidate) {
+        return;
+      }
+      candidates.push(candidate);
+    };
+
+    if (this.state.phase === 'DAY' && Array.isArray(this.locations)) {
+      const collected =
+        this.state.dayCollectedByDistrict?.[this.state.currentDistrictId] || {};
+      this.locations.forEach((location) => {
+        if (typeof location.x !== 'number' || typeof location.y !== 'number') {
+          return;
+        }
+        const distance = Phaser.Math.Distance.Between(
+          this.player.x,
+          this.player.y,
+          location.x,
+          location.y
+        );
+        if (distance > INTERACT_RADIUS) {
+          return;
+        }
+        const alreadyCollected = Boolean(collected[location.contactId]);
+        const reason =
+          this.state.dayActionsRemaining <= 0
+            ? 'No actions remaining'
+            : alreadyCollected
+              ? 'Already collected today'
+              : '';
+        addCandidate({
+          distance,
+          text: `[F] Speak with ${location.label}`,
+          reason,
+          canInteract: !reason,
+          interactable: {
+            onInteract: () => this.handleCollect(location.contactId),
+            canInteract: !reason,
+          },
+        });
+      });
+    }
+
+    if (this.state.phase === 'NIGHT') {
+      const activePois = this.getActivePois().filter((poi) => poi.type !== 'SHRINE');
+      activePois.forEach((poi) => {
+        const distance = Phaser.Math.Distance.Between(
+          this.player.x,
+          this.player.y,
+          poi.x,
+          poi.y
+        );
+        if (distance > (poi.radius || INTERACT_RADIUS)) {
+          return;
+        }
+        const actionLabel = this.getPoiActionLabel(poi.type);
+        const cost = this.getPoiActionCost(poi.type, poi);
+        let reason = '';
+        if (this.state.packStamina < cost) {
+          reason = 'Not enough stamina';
+        } else if (poi.type === 'RUCKUS' && this.state.packPower < 2) {
+          reason = 'Not enough power';
+        }
+        addCandidate({
+          distance,
+          text: `[F] ${actionLabel}`,
+          reason,
+          canInteract: !reason,
+          interactable: {
+            onInteract: () => this.handlePoiAction(poi.type),
+            canInteract: !reason,
+          },
+        });
+      });
+    }
+
+    if (context?.nearestShrine && context.nearestShrineInRange) {
+      const reason = context.nearestShrine.prayedToday ? 'Already collected today' : '';
+      addCandidate({
+        distance: context.nearestShrineDistance || 0,
+        text: '[F] Pray',
+        reason,
+        canInteract: !reason,
+        interactable: {
+          onInteract: () => this.handlePray(),
+          canInteract: !reason,
+        },
+      });
+    }
+
+    if (Array.isArray(this.structureMarkers) && this.structureMarkers.length > 0) {
+      this.structureMarkers.forEach((structure) => {
+        const distance = Phaser.Math.Distance.Between(
+          this.player.x,
+          this.player.y,
+          structure.x,
+          structure.y
+        );
+        if (distance > (structure.radius || INTERACT_RADIUS)) {
+          return;
+        }
+        const actionLabel = structure.id === 'house'
+          ? this.state.phase === 'DAY'
+            ? 'Rest (End Day / Start Night)'
+            : 'Rest (End Night / Start Day)'
+          : structure.action || 'Interact';
+        addCandidate({
+          distance,
+          text: `[F] ${actionLabel}`,
+          reason: '',
+          canInteract: true,
+          interactable: {
+            onInteract:
+              structure.id === 'house'
+                ? () => this.handleHouseRest()
+                : () => this.handleStableInteract(),
+            canInteract: true,
+          },
+        });
+      });
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates[0];
+  }
+
+  handleInteract() {
+    if (this.inputLocked || this.state.victory || this.state.gameOver) {
+      return;
+    }
+    if (!this.currentInteractable) {
+      return;
+    }
+    if (this.currentInteractable.canInteract === false) {
+      return;
+    }
+    if (!this.currentInteractable.onInteract) {
+      return;
+    }
+    this.currentInteractable.onInteract();
+  }
+
+  handleStableInteract() {
+    setPanelOpen('pack', true);
+  }
+
+  handleHouseRest() {
+    if (this.currentDistrict?.id !== 'camp') {
+      return;
+    }
+    if (this.state.phase === 'DAY') {
+      const confirmed = window.confirm('Begin Night Watch?');
+      if (confirmed) {
+        this.handleStartNight();
+      }
+    } else {
+      const confirmed = window.confirm('Sleep until Dawn?');
+      if (confirmed) {
+        this.handleEndNight();
+      }
+    }
   }
 
   handleGatewayOverlap(gateway) {
@@ -565,6 +771,7 @@ export default class GameScene extends Phaser.Scene {
     this.currentDistrict = districtConfig;
     this.updateDistrictBackground(districtConfig);
     this.createLocations(districtConfig.dayLocations);
+    this.createStructures(districtConfig.campStructures);
     this.setupGateways(districtConfig.gateways);
     this.player.setPosition(gateway.spawnX, gateway.spawnY);
     this.lastPosition = { x: gateway.spawnX, y: gateway.spawnY };
@@ -662,6 +869,9 @@ export default class GameScene extends Phaser.Scene {
     if (this.state.phase !== 'DAY') {
       return;
     }
+    if (this.currentDistrict?.id !== 'camp') {
+      return;
+    }
     const previousPhase = this.state.phase;
     startNight(this.state);
     spawnPoisForNight(this.state, this.currentDistrict);
@@ -742,6 +952,9 @@ export default class GameScene extends Phaser.Scene {
 
   handleEndNight() {
     if (this.state.phase !== 'NIGHT') {
+      return;
+    }
+    if (this.currentDistrict?.id !== 'camp') {
       return;
     }
     const previousPhase = this.state.phase;
@@ -926,6 +1139,21 @@ export default class GameScene extends Phaser.Scene {
         return Math.max(1, 2 + modifier);
       default:
         return Math.max(1, 1 + modifier);
+    }
+  }
+
+  getPoiActionLabel(type) {
+    switch (type) {
+      case 'OVERGROWTH':
+        return 'Clear Overgrowth';
+      case 'ROUTE':
+        return 'Guard Route';
+      case 'RUCKUS':
+        return 'Suppress Threat';
+      case 'LOT':
+        return 'Secure Lot';
+      default:
+        return 'Respond';
     }
   }
 

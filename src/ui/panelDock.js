@@ -1,8 +1,8 @@
-const STORAGE_KEY = 'thelore_panel_state_v1';
+const STORAGE_KEY = 'thelore_panel_state_v2';
 
 const DEFAULT_PANELS = {
   actions: {
-    open: true,
+    open: false,
     dirty: false,
     dirtyCount: 0,
     active: false,
@@ -10,7 +10,7 @@ const DEFAULT_PANELS = {
     stateText: '',
   },
   pack: {
-    open: true,
+    open: false,
     dirty: false,
     dirtyCount: 0,
     active: false,
@@ -26,7 +26,7 @@ const DEFAULT_PANELS = {
     stateText: '',
   },
   meters: {
-    open: true,
+    open: false,
     dirty: false,
     dirtyCount: 0,
     active: false,
@@ -34,7 +34,7 @@ const DEFAULT_PANELS = {
     stateText: '',
   },
   population: {
-    open: true,
+    open: false,
     dirty: false,
     dirtyCount: 0,
     active: false,
@@ -42,7 +42,7 @@ const DEFAULT_PANELS = {
     stateText: '',
   },
   controls: {
-    open: true,
+    open: false,
     dirty: false,
     dirtyCount: 0,
     active: false,
@@ -50,7 +50,7 @@ const DEFAULT_PANELS = {
     stateText: '',
   },
   status: {
-    open: true,
+    open: false,
     dirty: false,
     dirtyCount: 0,
     active: false,

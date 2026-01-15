@@ -8,7 +8,6 @@ import { getDistrictConfig } from '../world/districts.js';
 import {
   formatBlessingDuration,
   formatBlessingEffect,
-  getBlessingActionCostModifier,
 } from '../world/blessings.js';
 import { GODS, GOD_BY_ID } from '../world/gods.js';
 import { getDomUI } from './domUI.js';
@@ -143,6 +142,13 @@ export const initDomHud = (state, callbacks) => {
   const metersPanel = document.getElementById('meters-panel');
   const populationPanel = document.getElementById('population-panel');
   const consoleLog = document.getElementById('console-log');
+  const headerLeft = document.getElementById('hud-header-left');
+  const headerCenter = document.getElementById('hud-header-center');
+  const headerRight = document.getElementById('hud-header-right');
+  const interactionPrompt = document.getElementById('interaction-prompt');
+  const interactionPromptText = interactionPrompt?.querySelector('.interaction-prompt-text') || null;
+  const interactionPromptReason =
+    interactionPrompt?.querySelector('.interaction-prompt-reason') || null;
 
   if (!actionsPanel || !packPanel || !feedPanel || !metersPanel || !populationPanel || !consoleLog) {
     return null;
@@ -164,7 +170,6 @@ export const initDomHud = (state, callbacks) => {
   const statusText = createElement('div', 'status-value', '');
   hudStatus.append(hudStatusRow, statusText);
 
-  const actionGroup = createElement('div', 'hud-action-group');
   const poiPanel = createElement('div', 'poi-panel');
   const poiHeader = createElement('div', 'poi-panel-header', 'Active Patrols');
   const poiContext = createElement('div', 'poi-context', '');
@@ -194,222 +199,7 @@ export const initDomHud = (state, callbacks) => {
     blessingList
   );
 
-  const getDistrictCollected = (stateSnapshot) =>
-    stateSnapshot.dayCollectedByDistrict?.[stateSnapshot.currentDistrictId] || {};
-
-  const isContactCollected = (stateSnapshot, contactId) =>
-    Boolean(getDistrictCollected(stateSnapshot)[contactId]);
-
-  const getNightActionCost = (stateSnapshot, baseCost) =>
-    Math.max(1, baseCost + getBlessingActionCostModifier(stateSnapshot));
-
-  const actionsConfig = [
-    {
-      id: 'contact_interact',
-      label: 'Speak with Contact',
-      onClick: () => {
-        const contactId = currentContext?.nearbyContact?.contactId;
-        if (contactId) {
-          callbacks.onCollectContact?.(contactId);
-        }
-      },
-      visibleWhen: (stateSnapshot, context) =>
-        stateSnapshot.phase === 'DAY' &&
-        Boolean(context.nearbyContact?.contactId) &&
-        !isContactCollected(stateSnapshot, context.nearbyContact.contactId),
-      enabledWhen: (stateSnapshot) =>
-        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
-      highlightWhen: (stateSnapshot, context) =>
-        stateSnapshot.dayActionsRemaining > 0 && Boolean(context.nearbyContact),
-      getLabel: (context) => {
-        const name = context.nearbyContact?.label || 'Contact';
-        const icon = context.nearbyContact?.faction?.icon;
-        return icon ? `Speak with ${icon} ${name}` : `Speak with ${name}`;
-      },
-    },
-    {
-      id: 'feed_pack',
-      label: 'Feed Hyenas',
-      onClick: callbacks.onFeedPack,
-      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'DAY',
-      enabledWhen: (stateSnapshot) =>
-        stateSnapshot.dayActionsRemaining > 0 && !interactionLocked,
-      highlightWhen: (stateSnapshot) =>
-        stateSnapshot.dayActionsRemaining > 0 &&
-        stateSnapshot.pack.some((hyena) => hyena.hunger >= 60),
-    },
-    {
-      id: 'stabilize_camp',
-      label: 'Stabilize Camp',
-      onClick: callbacks.onStabilizeCamp,
-      visibleWhen: (stateSnapshot) =>
-        stateSnapshot.phase === 'DAY' && stateSnapshot.campActive,
-      enabledWhen: (stateSnapshot) =>
-        stateSnapshot.dayActionsRemaining > 0 &&
-        stateSnapshot.campActive &&
-        stateSnapshot.foodScraps >= 2 &&
-        !interactionLocked,
-      highlightWhen: (stateSnapshot) =>
-        stateSnapshot.campActive && stateSnapshot.campPressure >= 60,
-    },
-    {
-      id: 'start_night',
-      label: 'End Day (Start Night)',
-      onClick: callbacks.onStartNight,
-      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'DAY',
-      enabledWhen: () => !interactionLocked,
-      highlightWhen: (stateSnapshot) => stateSnapshot.dayActionsRemaining === 0,
-    },
-    {
-      id: 'clear_overgrowth',
-      label: 'Clear Overgrowth',
-      onClick: callbacks.onClearOvergrowth,
-      visibleWhen: (stateSnapshot, context) =>
-        stateSnapshot.phase === 'NIGHT' &&
-        context.nearestPoi?.type === 'OVERGROWTH',
-      enabledWhen: (stateSnapshot, context) => {
-        const severity = context.nearestPoi?.severity || 1;
-        const cost = getNightActionCost(stateSnapshot, 2 + severity);
-        return (
-          !interactionLocked &&
-          context.nearestPoiInRange &&
-          stateSnapshot.packStamina >= cost
-        );
-      },
-      highlightWhen: (stateSnapshot, context) =>
-        Boolean(context.nearestPoiInRange) || stateSnapshot.overgrowth >= 60,
-      getDisableReason: (stateSnapshot, context) => {
-        const severity = context.nearestPoi?.severity || 1;
-        const cost = getNightActionCost(stateSnapshot, 2 + severity);
-        if (!context.nearestPoiInRange) {
-          return 'Move closer to the overgrowth.';
-        }
-        if (stateSnapshot.packStamina < cost) {
-          return `Need ${cost} stamina.`;
-        }
-        return '';
-      },
-    },
-    {
-      id: 'guard_route',
-      label: 'Guard Route',
-      onClick: callbacks.onGuardRoute,
-      visibleWhen: (stateSnapshot, context) =>
-        stateSnapshot.phase === 'NIGHT' &&
-        context.nearestPoi?.type === 'ROUTE',
-      enabledWhen: (stateSnapshot, context) =>
-        !interactionLocked &&
-        context.nearestPoiInRange &&
-        stateSnapshot.packStamina >= getNightActionCost(stateSnapshot, 2),
-      highlightWhen: (stateSnapshot, context) =>
-        Boolean(context.nearestPoiInRange) || stateSnapshot.threatActive,
-      getDisableReason: (stateSnapshot, context) => {
-        if (!context.nearestPoiInRange) {
-          return 'Move closer to the patrol route.';
-        }
-        const cost = getNightActionCost(stateSnapshot, 2);
-        if (stateSnapshot.packStamina < cost) {
-          return `Need ${cost} stamina.`;
-        }
-        return '';
-      },
-    },
-    {
-      id: 'suppress_threat',
-      label: 'Suppress Threat',
-      onClick: callbacks.onSuppressThreat,
-      visibleWhen: (stateSnapshot, context) =>
-        stateSnapshot.phase === 'NIGHT' &&
-        context.nearestPoi?.type === 'RUCKUS',
-      enabledWhen: (stateSnapshot, context) =>
-        !interactionLocked &&
-        context.nearestPoiInRange &&
-        stateSnapshot.packStamina >= getNightActionCost(stateSnapshot, 3) &&
-        stateSnapshot.packPower >= 2,
-      highlightWhen: (stateSnapshot, context) =>
-        Boolean(context.nearestPoiInRange) || stateSnapshot.threatActive,
-      getDisableReason: (stateSnapshot, context) => {
-        if (!context.nearestPoiInRange) {
-          return 'Move closer to the ruckus.';
-        }
-        const cost = getNightActionCost(stateSnapshot, 3);
-        if (stateSnapshot.packStamina < cost) {
-          return `Need ${cost} stamina.`;
-        }
-        if (stateSnapshot.packPower < 2) {
-          return 'Need 2 power.';
-        }
-        return '';
-      },
-    },
-    {
-      id: 'secure_lot',
-      label: 'Secure Lot',
-      onClick: callbacks.onSecureLot,
-      visibleWhen: (stateSnapshot, context) =>
-        stateSnapshot.phase === 'NIGHT' &&
-        context.nearestPoi?.type === 'LOT',
-      enabledWhen: (stateSnapshot, context) =>
-        !interactionLocked &&
-        context.nearestPoiInRange &&
-        stateSnapshot.packStamina >= getNightActionCost(stateSnapshot, 2),
-      highlightWhen: (stateSnapshot, context) => Boolean(context.nearestPoiInRange),
-      getDisableReason: (stateSnapshot, context) => {
-        if (!context.nearestPoiInRange) {
-          return 'Move closer to the lot.';
-        }
-        const cost = getNightActionCost(stateSnapshot, 2);
-        if (stateSnapshot.packStamina < cost) {
-          return `Need ${cost} stamina.`;
-        }
-        return '';
-      },
-    },
-    {
-      id: 'pray_shrine',
-      label: 'Pray',
-      onClick: callbacks.onPrayAtShrine,
-      visibleWhen: (stateSnapshot, context) => Boolean(context.nearestShrine),
-      enabledWhen: (stateSnapshot, context) =>
-        !interactionLocked &&
-        context.nearestShrineInRange &&
-        !context.nearestShrine?.prayedToday,
-      highlightWhen: (stateSnapshot, context) => Boolean(context.nearestShrineInRange),
-      getDisableReason: (stateSnapshot, context) => {
-        if (!context.nearestShrineInRange) {
-          return 'Move closer to the shrine.';
-        }
-        if (context.nearestShrine?.prayedToday) {
-          return 'Already prayed today.';
-        }
-        return '';
-      },
-    },
-    {
-      id: 'end_night',
-      label: 'End Night',
-      onClick: callbacks.onEndNight,
-      visibleWhen: (stateSnapshot) => stateSnapshot.phase === 'NIGHT',
-      enabledWhen: () => !interactionLocked,
-      highlightWhen: (stateSnapshot) =>
-        stateSnapshot.packStamina === 0 || !stateSnapshot.threatActive,
-    },
-  ];
-
-  const actionButtons = new Map();
-  const actionVisibility = new Map();
-
-  actionsConfig.forEach((action) => {
-    const button = createHudButton(action.label, action.onClick);
-    actionGroup.appendChild(button.el);
-    actionButtons.set(action.id, {
-      ...action,
-      button,
-    });
-    actionVisibility.set(action.id, false);
-  });
-
-  actionsPanel.append(hudStatus, poiPanel, shrinePanel, actionGroup);
+  actionsPanel.append(hudStatus, poiPanel, shrinePanel);
 
   const packSummary = createElement('div', null, 'Tonight’s contributions:');
   const packCardsContainer = createElement('div', 'hud-action-group');
@@ -618,7 +408,21 @@ export const initDomHud = (state, callbacks) => {
   let lastPopulationSnapshot = null;
   let lastPopulationChangeAt = 0;
   let shrineListVisible = false;
-  let currentContext = null;
+  const updateHeader = (stateSnapshot) => {
+    const district = getDistrictConfig(stateSnapshot.currentDistrictId);
+    if (headerLeft) {
+      headerLeft.textContent = `Day ${stateSnapshot.dayNumber} • ${stateSnapshot.phase}`;
+    }
+    if (headerCenter) {
+      headerCenter.textContent = district.displayName;
+    }
+    if (headerRight) {
+      headerRight.textContent =
+        stateSnapshot.phase === 'DAY'
+          ? `Actions: ${stateSnapshot.dayActionsRemaining}`
+          : `Stamina: ${stateSnapshot.packStamina} | Power: ${stateSnapshot.packPower}`;
+    }
+  };
 
   shrineToggle.addEventListener('click', () => {
     shrineListVisible = !shrineListVisible;
@@ -689,6 +493,7 @@ export const initDomHud = (state, callbacks) => {
       stateSnapshot.phase === 'DAY'
         ? `Actions Remaining: ${stateSnapshot.dayActionsRemaining}`
         : `Pack Stamina: ${stateSnapshot.packStamina} | Power: ${stateSnapshot.packPower}`;
+    updateHeader(stateSnapshot);
   };
 
   const formatPoiType = (type) => {
@@ -778,7 +583,7 @@ export const initDomHud = (state, callbacks) => {
       if (context.nearestShrineInRange) {
         shrinePrompt.textContent = context.nearestShrine.prayedToday
           ? `Shrine of ${context.shrineGod.name} — Already prayed today`
-          : `Shrine of ${context.shrineGod.name} — Press [Pray]`;
+          : `Shrine of ${context.shrineGod.name} — Press F to Pray`;
       } else if (typeof context.nearestShrineDistance === 'number') {
         shrinePrompt.textContent = `Shrine of ${context.shrineGod.name} — ${Math.round(
           context.nearestShrineDistance
@@ -840,37 +645,26 @@ export const initDomHud = (state, callbacks) => {
     });
   };
 
-  const updateButtons = (stateSnapshot, context) => {
-    currentContext = context;
-    actionButtons.forEach((action, actionId) => {
-      const isVisible = action.visibleWhen?.(stateSnapshot, context) ?? true;
-      const wasVisible = actionVisibility.get(actionId) ?? false;
-      action.button.setVisible(isVisible);
-      actionVisibility.set(actionId, isVisible);
-
-      if (isVisible && !wasVisible && !isPanelOpen('actions')) {
-        setPanelDirty('actions', true, { increment: 1 });
-      }
-
-      if (!isVisible) {
-        return;
-      }
-
-      const isEnabled = action.enabledWhen?.(stateSnapshot, context) ?? true;
-      const isHighlighted = action.highlightWhen?.(stateSnapshot, context) ?? false;
-      const reasonText =
-        !isEnabled && action.getDisableReason
-          ? action.getDisableReason(stateSnapshot, context)
-          : '';
-      if (action.getLabel) {
-        action.button.setLabel(action.getLabel(context));
-      }
-      action.button.setEnabled(isEnabled);
-      action.button.setHighlighted(isHighlighted);
-      action.button.setReason(reasonText);
-    });
-
-    updateFeedPanel(stateSnapshot);
+  const updateInteractionPrompt = (context) => {
+    if (!interactionPrompt || !interactionPromptText || !interactionPromptReason) {
+      return;
+    }
+    const prompt = context?.interactionPrompt;
+    if (!prompt) {
+      interactionPrompt.classList.remove('is-visible');
+      interactionPromptText.textContent = '';
+      interactionPromptReason.textContent = '';
+      return;
+    }
+    interactionPrompt.classList.add('is-visible');
+    interactionPromptText.textContent = prompt.text || '';
+    if (prompt.reason) {
+      interactionPromptReason.textContent = prompt.reason;
+      interactionPromptReason.style.display = 'block';
+    } else {
+      interactionPromptReason.textContent = '';
+      interactionPromptReason.style.display = 'none';
+    }
   };
 
   const updateMeters = (stateSnapshot) => {
@@ -1089,11 +883,12 @@ export const initDomHud = (state, callbacks) => {
       updateTopStatus(stateSnapshot);
       updatePoiPanel(stateSnapshot, context);
       updateShrinePanel(stateSnapshot, context);
-      updateButtons(stateSnapshot, context);
+      updateFeedPanel(stateSnapshot);
       updateMeters(stateSnapshot);
       updatePopulationPanel(stateSnapshot);
       updatePackPanel(stateSnapshot);
       updateLog(stateSnapshot);
+      updateInteractionPrompt(context);
 
       setPanelStateText('actions', stateSnapshot.phase === 'DAY' ? 'DAY' : 'NIGHT');
       setPanelStateText(
