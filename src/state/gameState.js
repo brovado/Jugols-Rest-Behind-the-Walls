@@ -442,6 +442,9 @@ export const createInitialState = () => {
   packSizeCap,
   suppliesTier: STARTING_SUPPLIES_TIER,
   burstCount: 0,
+  burstToday: false,
+  draftPending: false,
+  draftOfferedDay: 0,
   draftActive: false,
   draftChoices: [],
   pack: activePackIds.map((id) => hyenaRoster.find((hyena) => hyena.id === id)).filter(Boolean),
@@ -533,7 +536,10 @@ export const loadGameState = () => {
       packSizeCap,
       suppliesTier: clampPositive(data.suppliesTier) || STARTING_SUPPLIES_TIER,
       burstCount: clampPositive(data.burstCount),
-      draftActive: Boolean(data.draftActive),
+      burstToday: Boolean(data.burstToday),
+      draftPending: Boolean(data.draftPending ?? data.draftActive),
+      draftOfferedDay: clampPositive(data.draftOfferedDay),
+      draftActive: Boolean(data.draftPending ?? data.draftActive),
       draftChoices: Array.isArray(data.draftChoices)
         ? data.draftChoices.map((entry) => normalizeHyena(entry, entry))
         : [],
@@ -821,6 +827,8 @@ export const startDay = (state, { advanceDay }) => {
   }
 
   const isBurstDay = state.dayNumber % BURST_INTERVAL === 0;
+  state.burstToday = isBurstDay;
+  addEvent(state, `Burst today: ${isBurstDay ? 'YES' : 'NO'}.`);
   if (isBurstDay) {
     state.burstCount = clampPositive(state.burstCount) + 1;
     const shouldGrowPack = state.burstCount % BURST_PACK_GROWTH_INTERVAL === 0;
@@ -829,13 +837,21 @@ export const startDay = (state, { advanceDay }) => {
       state.suppliesTier = Math.max(STARTING_SUPPLIES_TIER, state.suppliesTier + 1);
       addEvent(state, 'Stable expansion: Pack cap +1. Supplies tier improved.');
     }
-    state.draftActive = true;
+    if (state.draftOfferedDay !== state.dayNumber) {
+      state.draftPending = true;
+      state.draftOfferedDay = state.dayNumber;
+      state.draftChoices = createDraftCandidates(state, 3);
+      addEvent(state, 'Burst arrivals: new hyena draft available at the Stable.');
+    }
+  }
+
+  if (state.draftPending && (!Array.isArray(state.draftChoices) || state.draftChoices.length === 0)) {
     state.draftChoices = createDraftCandidates(state, 3);
-    addEvent(state, 'Burst arrivals: new hyena draft available at the Stable.');
-  } else {
-    state.draftActive = false;
+  }
+  if (!state.draftPending) {
     state.draftChoices = [];
   }
+  state.draftActive = Boolean(state.draftPending);
 
   applyBlessingMorningTicks(state);
   pruneExpiredBlessings(state);
