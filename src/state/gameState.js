@@ -829,6 +829,12 @@ export const startDay = (state, { advanceDay }) => {
   const isBurstDay = state.dayNumber % BURST_INTERVAL === 0;
   state.burstToday = isBurstDay;
   addEvent(state, `Burst today: ${isBurstDay ? 'YES' : 'NO'}.`);
+  if (state.dayNumber === 1 && state.draftOfferedDay !== state.dayNumber) {
+    state.draftPending = true;
+    state.draftOfferedDay = state.dayNumber;
+    state.draftChoices = createDraftCandidates(state, 3);
+    addEvent(state, 'Initial draft available.');
+  }
   if (isBurstDay) {
     state.burstCount = clampPositive(state.burstCount) + 1;
     const shouldGrowPack = state.burstCount % BURST_PACK_GROWTH_INTERVAL === 0;
