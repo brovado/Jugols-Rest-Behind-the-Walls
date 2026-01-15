@@ -23,7 +23,7 @@ const FATTY_POWER_BY_ROLE = {
   Warden: 1,
 };
 
-const clampMeter = (value) => Math.max(0, Math.min(MAX_METER, value));
+export const clampMeter = (value) => Math.max(0, Math.min(MAX_METER, value));
 
 const getAvailableHousing = (state) =>
   Math.max(0, (state.housingCapacity || 0) - (state.housedPop || 0));
@@ -62,6 +62,83 @@ const createPack = () => ([
     fedFatty: 0,
   },
 ]);
+
+const POI_RADIUS = 60;
+const POI_TYPES = ['OVERGROWTH', 'RUCKUS', 'ROUTE', 'LOT'];
+
+const NIGHT_POI_POINTS = {
+  OVERGROWTH: [
+    { x: 1380, y: 220 },
+    { x: 1540, y: 410 },
+    { x: 1220, y: 520 },
+    { x: 1640, y: 640 },
+    { x: 1180, y: 320 },
+  ],
+  ROUTE: [
+    { x: 1260, y: 610 },
+    { x: 1500, y: 520 },
+    { x: 1060, y: 700 },
+  ],
+  RUCKUS: [
+    { x: 1100, y: 890 },
+    { x: 1400, y: 900 },
+    { x: 1280, y: 980 },
+  ],
+  LOT: [
+    { x: 1520, y: 760 },
+    { x: 1200, y: 840 },
+  ],
+};
+
+const createPoi = (state, type, point, index, severity) => ({
+  id: `poi-${state.dayNumber}-${state.phase}-${type}-${index}`,
+  type,
+  x: point.x,
+  y: point.y,
+  radius: POI_RADIUS,
+  severity,
+  resolved: false,
+});
+
+const pickPoints = (points, count, seed) => {
+  if (!Array.isArray(points) || points.length === 0 || count <= 0) {
+    return [];
+  }
+  const start = Math.abs(seed) % points.length;
+  return Array.from({ length: Math.min(count, points.length) }, (_, idx) =>
+    points[(start + idx) % points.length]
+  );
+};
+
+const getOvergrowthCount = (overgrowth) => {
+  if (overgrowth < 40) {
+    return 2;
+  }
+  if (overgrowth <= 70) {
+    return 3;
+  }
+  return 4;
+};
+
+const getOvergrowthSeverity = (overgrowth) => {
+  if (overgrowth >= 70) {
+    return 3;
+  }
+  if (overgrowth >= 40) {
+    return 2;
+  }
+  return 1;
+};
+
+const getRuckusSeverity = (tension) => {
+  if (tension >= 80) {
+    return 3;
+  }
+  if (tension >= 60) {
+    return 2;
+  }
+  return 1;
+};
 
 const normalizePack = (packData) => {
   if (!Array.isArray(packData) || packData.length === 0) {
@@ -137,6 +214,9 @@ export const createInitialState = () => ({
   incomingNextDay: getForecastForDay(1),
   housingCapacity: 10,
   housingBoostedTonight: false,
+  clearedOvergrowthTonight: false,
+  clearedOvergrowthLastNight: false,
+  activePois: [],
   locationCollected: {
     butcher: false,
     tavern: false,
@@ -182,6 +262,9 @@ export const loadGameState = () => {
         ...base.locationCollected,
         ...data.locationCollected,
       },
+      activePois: Array.isArray(data.activePois)
+        ? data.activePois.filter((poi) => POI_TYPES.includes(poi.type))
+        : [],
       eventLog: Array.isArray(data.eventLog) ? data.eventLog : [],
     };
     merged.housedPop = Math.max(0, merged.housedPop || 0);
@@ -191,11 +274,81 @@ export const loadGameState = () => {
       merged.incomingNextDay ?? getForecastForDay(merged.dayNumber + 1);
     merged.campActive = merged.campPop > 0;
     merged.campPressure = clampMeter(merged.campPressure || 0);
+    merged.clearedOvergrowthTonight = Boolean(merged.clearedOvergrowthTonight);
+    merged.clearedOvergrowthLastNight = Boolean(merged.clearedOvergrowthLastNight);
     return merged;
   } catch (error) {
     console.warn('Failed to load game state', error);
     return null;
   }
+};
+
+export const spawnPoisForDay = (state) => {
+  state.activePois = [];
+  return state.activePois;
+};
+
+export const spawnPoisForNight = (state) => {
+  const nextPois = [];
+  const routeSeed = state.dayNumber * 3;
+  const routePoint = pickPoints(NIGHT_POI_POINTS.ROUTE, 1, routeSeed)[0];
+  if (routePoint) {
+    nextPois.push(createPoi(state, 'ROUTE', routePoint, routeSeed, 1 + (state.dayNumber % 2)));
+  }
+
+  const overgrowthCount = getOvergrowthCount(state.overgrowth);
+  const overgrowthSeverity = getOvergrowthSeverity(state.overgrowth);
+  const overgrowthPoints = pickPoints(
+    NIGHT_POI_POINTS.OVERGROWTH,
+    overgrowthCount,
+    state.dayNumber * 5 + state.overgrowth
+  );
+  overgrowthPoints.forEach((point, index) => {
+    nextPois.push(
+      createPoi(state, 'OVERGROWTH', point, index, Math.min(3, overgrowthSeverity + (index % 2)))
+    );
+  });
+
+  const shouldSpawnRuckus =
+    state.tension >= 60 || state.campPop > 0 || state.threatActive;
+  if (shouldSpawnRuckus) {
+    const ruckusCount = state.tension >= 80 ? 2 : 1;
+    const ruckusSeverity = getRuckusSeverity(state.tension);
+    const ruckusPoints = pickPoints(
+      NIGHT_POI_POINTS.RUCKUS,
+      ruckusCount,
+      state.dayNumber * 7 + state.tension
+    );
+    ruckusPoints.forEach((point, index) => {
+      nextPois.push(
+        createPoi(state, 'RUCKUS', point, index, Math.min(3, ruckusSeverity + (index % 2)))
+      );
+    });
+  }
+
+  const needsLotReward =
+    state.clearedOvergrowthLastNight || getAvailableHousing(state) <= 0;
+  if (needsLotReward) {
+    const lotPoint = pickPoints(NIGHT_POI_POINTS.LOT, 1, state.dayNumber * 11)[0];
+    if (lotPoint) {
+      nextPois.push(createPoi(state, 'LOT', lotPoint, state.dayNumber, 1));
+    }
+  }
+
+  state.activePois = nextPois;
+  return state.activePois;
+};
+
+export const resolvePoi = (state, id) => {
+  if (!Array.isArray(state.activePois)) {
+    return null;
+  }
+  const poi = state.activePois.find((entry) => entry.id === id);
+  if (!poi || poi.resolved) {
+    return null;
+  }
+  poi.resolved = true;
+  return poi;
 };
 
 export const hasSavedGame = () => {
@@ -213,6 +366,7 @@ export const startDay = (state, { advanceDay }) => {
 
   state.phase = 'DAY';
   state.dayActionsRemaining = DAY_ACTIONS;
+  spawnPoisForDay(state);
   state.locationCollected = {
     butcher: false,
     tavern: false,
@@ -266,6 +420,7 @@ export const startNight = (state) => {
   state.packPower = Math.max(0, PACK_BASE_POWER + totals.power);
   state.routeGuardedTonight = false;
   state.housingBoostedTonight = false;
+  state.clearedOvergrowthTonight = false;
 };
 
 export const endNight = (state) => {
@@ -286,6 +441,8 @@ export const endNight = (state) => {
     });
   }
 
+  state.clearedOvergrowthLastNight = state.clearedOvergrowthTonight;
+  state.clearedOvergrowthTonight = false;
   startDay(state, { advanceDay: true });
 };
 
