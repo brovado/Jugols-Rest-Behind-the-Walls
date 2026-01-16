@@ -182,6 +182,100 @@
          "y":0
         }, 
         {
+         "draworder":"topdown",
+         "id":7,
+         "name":"house",
+         "objects":[
+                {
+                 "height":30.25,
+                 "id":6,
+                 "name":"",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":30.25,
+                 "x":576.75,
+                 "y":577.25
+                }],
+         "opacity":1,
+         "properties":[
+                {
+                 "name":"kind",
+                 "type":"string",
+                 "value":"house"
+                }],
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":8,
+         "name":"stable",
+         "objects":[
+                {
+                 "height":252,
+                 "id":7,
+                 "name":"",
+                 "properties":[
+                        {
+                         "name":"kind",
+                         "type":"string",
+                         "value":"stable"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":380,
+                 "x":261.333333333333,
+                 "y":153.333333333333
+                }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":9,
+         "name":"Verdent Exit",
+         "objects":[
+                {
+                 "height":168,
+                 "id":8,
+                 "name":"",
+                 "properties":[
+                        {
+                         "name":"kind",
+                         "type":"string",
+                         "value":"exit"
+                        }, 
+                        {
+                         "name":"spawn",
+                         "type":"string",
+                         "value":"verdent_entry"
+                        }, 
+                        {
+                         "name":"toDistrict",
+                         "type":"string",
+                         "value":"verdent_grove"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":130.666666666667,
+                 "x":29.3333333333333,
+                 "y":648
+                }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
          "data":[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -331,8 +425,8 @@
          "x":0,
          "y":0
         }],
- "nextlayerid":6,
- "nextobjectid":5,
+ "nextlayerid":10,
+ "nextobjectid":9,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.11.2",
