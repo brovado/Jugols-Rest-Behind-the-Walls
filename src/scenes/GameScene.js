@@ -32,7 +32,7 @@ import {
   getBlessingActionCostModifier,
 } from '../world/blessings.js';
 import { FACTION_BY_ID } from '../data/factions.js';
-import { getDistrictConfig } from '../world/districts.js';
+import { DISTRICTS, getDistrictConfig } from '../world/districts.js';
 import { GOD_BY_ID } from '../world/gods.js';
 import {
   getContactById,
@@ -87,6 +87,7 @@ export default class GameScene extends Phaser.Scene {
     this.currentDistrict = null;
     this.isTransitioning = false;
     this.structureMarkers = [];
+    this.exitZones = [];
     this.campNpcMarkers = [];
     this.campWardenById = new Map();
     this.currentInteractable = null;
@@ -156,7 +157,13 @@ export default class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, this.worldBounds.width, this.worldBounds.height);
     this.updateDistrictBackground(this.currentDistrict);
     this.createLocations(this.currentDistrict?.dayLocations);
-    this.createStructures(this.currentDistrict?.campStructures);
+    const mapInteractables =
+      this.currentDistrict?.id === 'camp' ? this.getMapInteractables(this.map) : null;
+    const campStructures = this.currentDistrict?.id === 'camp'
+      ? mapInteractables?.structures || []
+      : this.currentDistrict?.campStructures;
+    this.exitZones = mapInteractables?.exits || [];
+    this.createStructures(campStructures);
     this.createCampNpcs(this.currentDistrict?.campNpcs);
   }
 
@@ -473,6 +480,172 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  getTiledProperty(properties, name) {
+    if (!properties) {
+      return undefined;
+    }
+    if (Array.isArray(properties)) {
+      const match = properties.find((prop) => prop.name === name);
+      return match?.value;
+    }
+    return properties[name];
+  }
+
+  resolveDistrictId(rawId) {
+    if (!rawId) {
+      return null;
+    }
+    if (DISTRICTS[rawId]) {
+      return rawId;
+    }
+    const normalized = rawId.split('_')[0];
+    if (DISTRICTS[normalized]) {
+      return normalized;
+    }
+    return null;
+  }
+
+  getGatewaySpawnForDistrict(districtId) {
+    if (!districtId) {
+      return null;
+    }
+    const districts = Object.values(DISTRICTS);
+    for (const district of districts) {
+      if (!Array.isArray(district.gateways)) {
+        continue;
+      }
+      const gateway = district.gateways.find((entry) => entry.toDistrictId === districtId);
+      if (gateway && typeof gateway.spawnX === 'number' && typeof gateway.spawnY === 'number') {
+        return { spawnX: gateway.spawnX, spawnY: gateway.spawnY };
+      }
+    }
+    return null;
+  }
+
+  getMapInteractables(map) {
+    if (!map) {
+      return { structures: [], exits: [] };
+    }
+    const namedLayer = map.getObjectLayer?.('Objects');
+    const layers = namedLayer
+      ? [namedLayer]
+      : Array.isArray(map.objects)
+        ? map.objects
+        : [];
+    const structures = [];
+    const exits = [];
+    const logEntries = [];
+
+    layers.forEach((layer) => {
+      if (!Array.isArray(layer.objects)) {
+        return;
+      }
+      const layerKind = this.getTiledProperty(layer.properties, 'kind');
+      layer.objects.forEach((obj) => {
+        const kind = this.getTiledProperty(obj.properties, 'kind') || layerKind;
+        if (!kind) {
+          return;
+        }
+        const width = obj.width || 0;
+        const height = obj.height || 0;
+        const x = obj.x ?? 0;
+        const y = obj.y ?? 0;
+        const id = obj.name || layer.name || kind;
+        const centerX = x + width / 2;
+        const centerY = y + height / 2;
+        logEntries.push({ id, kind, x, y, width, height });
+
+        if (kind === 'exit') {
+          const toDistrict = this.getTiledProperty(obj.properties, 'toDistrict');
+          const resolvedDistrictId = this.resolveDistrictId(toDistrict);
+          const districtConfig = resolvedDistrictId
+            ? getDistrictConfig(resolvedDistrictId)
+            : null;
+          const spawn = resolvedDistrictId
+            ? this.getGatewaySpawnForDistrict(resolvedDistrictId)
+            : null;
+          if (!resolvedDistrictId || !spawn) {
+            console.warn('Exit interactable missing district spawn data.', {
+              id,
+              toDistrict,
+              resolvedDistrictId,
+            });
+          }
+          exits.push({
+            id,
+            kind,
+            bounds: { x, y, w: width, h: height },
+            centerX,
+            centerY,
+            label: districtConfig ? `Travel to ${districtConfig.displayName}` : 'Travel',
+            gateway: resolvedDistrictId && spawn
+              ? {
+                toDistrictId: resolvedDistrictId,
+                spawnX: spawn.spawnX,
+                spawnY: spawn.spawnY,
+              }
+              : null,
+          });
+          return;
+        }
+
+        if (kind === 'house' || kind === 'stable') {
+          const defaults = this.currentDistrict?.campStructures?.find(
+            (entry) => entry.id === kind
+          );
+          structures.push({
+            id: kind,
+            label: defaults?.label || (kind === 'house' ? 'House' : 'Stable'),
+            action: defaults?.action,
+            color: defaults?.color,
+            x,
+            y,
+            w: width,
+            h: height,
+            centerX,
+            centerY,
+            bounds: { x, y, w: width, h: height },
+          });
+        }
+      });
+    });
+
+    if (logEntries.length > 0) {
+      console.log('Map interactables loaded', logEntries);
+    }
+
+    return { structures, exits };
+  }
+
+  isPointInBounds(x, y, bounds) {
+    if (!bounds) {
+      return false;
+    }
+    return (
+      x >= bounds.x &&
+      x <= bounds.x + bounds.w &&
+      y >= bounds.y &&
+      y <= bounds.y + bounds.h
+    );
+  }
+
+  updateStructureLabelVisibility() {
+    if (!this.player || !Array.isArray(this.structureMarkers)) {
+      return;
+    }
+    this.structureMarkers.forEach((structure) => {
+      if (!structure.text) {
+        return;
+      }
+      if (!structure.bounds) {
+        structure.text.setVisible(true);
+        return;
+      }
+      const within = this.isPointInBounds(this.player.x, this.player.y, structure.bounds);
+      structure.text.setVisible(within);
+    });
+  }
+
   createStructures(structures) {
     if (Array.isArray(this.structureMarkers)) {
       this.structureMarkers.forEach((entry) => {
@@ -490,9 +663,13 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
       const color = structure.color ?? 0x38bdf8;
-      const marker = this.add.rectangle(structure.x, structure.y, 44, 44, color, 0.3);
+      const width = structure.w || 44;
+      const height = structure.h || 44;
+      const centerX = structure.centerX ?? structure.x;
+      const centerY = structure.centerY ?? structure.y;
+      const marker = this.add.rectangle(centerX, centerY, width, height, color, 0.3);
       marker.setStrokeStyle(2, color, 0.8);
-      const text = this.add.text(structure.x, structure.y - 32, structure.label, {
+      const text = this.add.text(centerX, centerY - 32, structure.label, {
         fontSize: '14px',
         color: '#f8fafc',
         backgroundColor: 'rgba(15, 23, 42, 0.6)',
@@ -500,6 +677,8 @@ export default class GameScene extends Phaser.Scene {
       }).setOrigin(0.5);
       this.structureMarkers.push({
         ...structure,
+        centerX,
+        centerY,
         marker,
         text,
         radius: structure.radius || INTERACT_RADIUS,
@@ -622,6 +801,7 @@ export default class GameScene extends Phaser.Scene {
       this.handleMovement(delta);
     }
     this.syncPoiMarkers();
+    this.updateStructureLabelVisibility();
     this.updateHud();
     this.updateStatus(delta);
   }
@@ -820,13 +1000,16 @@ export default class GameScene extends Phaser.Scene {
     if (structureId && Array.isArray(this.structureMarkers)) {
       const structure = this.structureMarkers.find((entry) => entry.id === structureId);
       if (structure && typeof structure.x === 'number' && typeof structure.y === 'number') {
+        const withinBounds = structure.bounds
+          ? this.isPointInBounds(this.player.x, this.player.y, structure.bounds)
+          : null;
         const distance = Phaser.Math.Distance.Between(
           this.player.x,
           this.player.y,
-          structure.x,
-          structure.y
+          structure.centerX ?? structure.x,
+          structure.centerY ?? structure.y
         );
-        if (distance <= (structure.radius || INTERACT_RADIUS)) {
+        if (withinBounds === true || distance <= (structure.radius || INTERACT_RADIUS)) {
           distances.push(distance);
         }
       }
@@ -999,13 +1182,19 @@ export default class GameScene extends Phaser.Scene {
 
     if (Array.isArray(this.structureMarkers) && this.structureMarkers.length > 0) {
       this.structureMarkers.forEach((structure) => {
+        const withinBounds = structure.bounds
+          ? this.isPointInBounds(this.player.x, this.player.y, structure.bounds)
+          : null;
+        if (withinBounds === false) {
+          return;
+        }
         const distance = Phaser.Math.Distance.Between(
           this.player.x,
           this.player.y,
-          structure.x,
-          structure.y
+          structure.centerX ?? structure.x,
+          structure.centerY ?? structure.y
         );
-        if (distance > (structure.radius || INTERACT_RADIUS)) {
+        if (withinBounds === null && distance > (structure.radius || INTERACT_RADIUS)) {
           return;
         }
         const actionLabel = structure.id === 'house'
@@ -1023,6 +1212,33 @@ export default class GameScene extends Phaser.Scene {
               structure.id === 'house'
                 ? () => this.handleHouseRest()
                 : () => this.handleStableInteract(),
+            canInteract: true,
+          },
+        });
+      });
+    }
+
+    if (Array.isArray(this.exitZones) && this.exitZones.length > 0) {
+      this.exitZones.forEach((exit) => {
+        if (!this.isPointInBounds(this.player.x, this.player.y, exit.bounds)) {
+          return;
+        }
+        if (!exit.gateway) {
+          return;
+        }
+        const distance = Phaser.Math.Distance.Between(
+          this.player.x,
+          this.player.y,
+          exit.centerX,
+          exit.centerY
+        );
+        addCandidate({
+          distance,
+          text: `[F] ${exit.label}`,
+          reason: '',
+          canInteract: true,
+          interactable: {
+            onInteract: () => this.transitionToDistrict(exit.gateway),
             canInteract: true,
           },
         });
@@ -1625,7 +1841,13 @@ export default class GameScene extends Phaser.Scene {
     this.currentDistrict = districtConfig;
     this.updateDistrictBackground(districtConfig);
     this.createLocations(districtConfig.dayLocations);
-    this.createStructures(districtConfig.campStructures);
+    const mapInteractables =
+      this.currentDistrict?.id === 'camp' ? this.getMapInteractables(this.map) : null;
+    const campStructures = this.currentDistrict?.id === 'camp'
+      ? mapInteractables?.structures || []
+      : this.currentDistrict?.campStructures;
+    this.exitZones = mapInteractables?.exits || [];
+    this.createStructures(campStructures);
     this.createCampNpcs(districtConfig.campNpcs);
     this.setupGateways(districtConfig.gateways);
     this.player.setPosition(gateway.spawnX, gateway.spawnY);
